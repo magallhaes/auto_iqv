@@ -1,0 +1,6 @@
+{
+  "name": "QuantIQ — Terminal Algorítmico & Catalogador IQ Option",
+  "description": "Terminal de operação automatizada via WebSocket IQ Option com estratégia MHI (1, 2, 3, Maioria/Minoria), confluência de EMA 9/21, RSI, Bandas de Bollinger, MACD, Suporte/Resistência, Price Action, catalogador de assertividade em tempo real e gestão Martingale/SorosGale.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
