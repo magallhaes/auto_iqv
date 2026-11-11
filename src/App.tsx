@@ -59,6 +59,8 @@ import {
   ShieldCheck,
   TrendingUp,
   TrendingDown,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { playTradingAudio } from './utils/sound';
 
@@ -289,6 +291,8 @@ export default function App() {
   });
   const [newsEvents, setNewsEvents] = useState<EconomicNewsEvent[]>(INITIAL_NEWS);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [terminalBottomTab, setTerminalBottomTab] = useState<'ORDERS' | 'STRATEGY'>('ORDERS');
+  const [showQuickSettings, setShowQuickSettings] = useState<boolean>(false);
   const [historyPage, setHistoryPage] = useState<number>(1);
   const historyPageSize = 10;
 
@@ -1062,21 +1066,26 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#0B0F17] text-slate-100 flex flex-col">
       {/* Top Bar Contract: Strictly 3 Zones separated by gap-8 */}
-      <header className="flex flex-col gap-3 px-4 py-3 border-b border-slate-800 bg-[#0B0F17] md:flex-row md:items-center md:justify-between md:gap-8 md:px-6 md:py-3.5">
+      <header className="px-3.5 py-2.5 sm:px-6 sm:py-3 border-b border-slate-800 bg-[#0B0F17] sticky top-0 z-30 flex items-center justify-between gap-4">
         {/* Zone 1: Single text element wordmark */}
-        <a
-          href="#terminal"
-          onClick={(e) => {
-            e.preventDefault();
-            setActiveTab('TERMINAL');
-          }}
-          className="text-lg font-display font-bold tracking-tight text-white whitespace-nowrap shrink-0 self-start md:self-auto"
-        >
-          QuantIQ
-        </a>
+        <div className="flex items-center gap-2">
+          <a
+            href="#terminal"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveTab('TERMINAL');
+            }}
+            className="text-lg sm:text-xl font-display font-black tracking-tight text-white whitespace-nowrap cursor-pointer hover:opacity-90 transition-opacity"
+          >
+            QuantIQ
+          </a>
+          <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
+            PRO
+          </span>
+        </div>
 
-        {/* Zone 2: Concise single-line navigation links */}
-        <nav className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-400 md:gap-6 md:text-sm md:overflow-x-auto">
+        {/* Zone 2: Desktop Navigation Links (hidden on mobile, replaced by bottom dock) */}
+        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-400">
           <a
             href="#terminal"
             onClick={(e) => {
@@ -1085,11 +1094,11 @@ export default function App() {
             }}
             className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'TERMINAL'
-                ? 'text-white border-blue-500'
+                ? 'text-white border-blue-500 font-semibold'
                 : 'border-transparent hover:text-white'
             }`}
           >
-            Terminal Operador
+            Terminal
           </a>
           <a
             href="#catalogacao"
@@ -1099,11 +1108,11 @@ export default function App() {
             }}
             className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'CATALOG'
-                ? 'text-white border-blue-500'
+                ? 'text-white border-blue-500 font-semibold'
                 : 'border-transparent hover:text-white'
             }`}
           >
-            Catalogação & Estratégias
+            Catálogo
           </a>
           <a
             href="#sinais"
@@ -1113,12 +1122,12 @@ export default function App() {
             }}
             className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 flex items-center gap-1.5 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'SIGNALS'
-                ? 'text-white border-blue-500'
+                ? 'text-white border-blue-500 font-semibold'
                 : 'border-transparent hover:text-white'
             }`}
           >
-            <span>Lista de Sinais & Gale</span>
-            {scheduledSignals.length > 0 && (
+            <span>Sinais</span>
+            {scheduledSignals.filter((s) => s.status === 'PENDING' || s.status === 'PRE_SIGNAL').length > 0 && (
               <span className="px-1.5 py-0.2 text-[10px] font-mono bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">
                 {scheduledSignals.filter((s) => s.status === 'PENDING' || s.status === 'PRE_SIGNAL').length}
               </span>
@@ -1132,11 +1141,11 @@ export default function App() {
             }}
             className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'RISK'
-                ? 'text-white border-blue-500'
+                ? 'text-white border-blue-500 font-semibold'
                 : 'border-transparent hover:text-white'
             }`}
           >
-            Stop Win / Loss & Entradas
+            Gestão
           </a>
           <a
             href="#performance"
@@ -1151,7 +1160,7 @@ export default function App() {
             }`}
           >
             <BarChart3 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Relatório Diário</span>
+            <span>Relatório</span>
           </a>
           <a
             href="#noticias"
@@ -1161,35 +1170,35 @@ export default function App() {
             }}
             className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'NEWS'
-                ? 'text-white border-blue-500'
+                ? 'text-white border-blue-500 font-semibold'
                 : 'border-transparent hover:text-white'
             }`}
           >
-            Filtro de Notícias
+            Notícias
           </a>
         </nav>
 
         {/* Zone 3: IQ Connect & User Session Actions */}
-        <div className="flex items-center justify-between gap-2 shrink-0 w-full md:w-auto md:justify-end">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setIsConnectModalOpen(true)}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ease-out whitespace-nowrap shrink-0 cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
+            className={`px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ease-out whitespace-nowrap shrink-0 cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
               connectionStatus.authenticated
                 ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-600/30'
                 : 'bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-500/20'
             }`}
           >
             {connectionStatus.authenticated
-              ? `IQ Conectada (${connectionStatus.email?.split('@')[0]})`
-              : 'Conectar IQ Option'}
+              ? `IQ: ${connectionStatus.email?.split('@')[0] || 'Conectada'}`
+              : 'Conectar IQ'}
           </button>
 
           {currentUser && (
-            <div className="flex items-center gap-2 pl-2 border-l border-slate-800 text-xs">
-              <div className="flex items-center gap-1.5 bg-[#141A26] px-2.5 py-1 rounded-lg border border-[#212B3E]">
+            <div className="flex items-center gap-1 sm:gap-1.5 pl-1.5 border-l border-slate-800 text-xs">
+              <div className="flex items-center gap-1 bg-[#141A26] px-2 py-1 rounded-lg border border-[#212B3E]">
                 <User className="w-3.5 h-3.5 text-slate-400" />
-                <span className="font-semibold text-white truncate max-w-[110px]">
-                  {currentUser.name}
+                <span className="font-semibold text-white truncate max-w-[70px] sm:max-w-[110px]">
+                  {currentUser.name.split(' ')[0]}
                 </span>
               </div>
               <button
@@ -1204,37 +1213,37 @@ export default function App() {
         </div>
       </header>
 
-      {/* Operational Toolbar Strip (Account Switcher, Inline Entry/Stop Config & Page Switchers) */}
-      <div className="bg-[#111827] border-b border-slate-800 px-3 py-3 sm:px-6">
-        <div className="max-w-[1440px] mx-auto flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          {/* Left: Account Mode & Balance */}
-          <div className="flex flex-col gap-2 text-[10px] sm:text-xs md:flex-wrap md:flex-row md:items-center md:gap-3">
-            <div className="inline-flex items-center p-0.5 bg-[#0B0F17] border border-slate-800 rounded-lg w-fit">
+      {/* Operational Toolbar Strip (Clean, focused on trade stats & inputs, zero page duplication) */}
+      <div className="bg-[#111827] border-b border-slate-800 px-3 py-2 sm:px-6">
+        <div className="max-w-[1440px] mx-auto flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
+          {/* Account Mode & Balance */}
+          <div className="flex items-center justify-between gap-3 text-xs md:justify-start">
+            <div className="inline-flex items-center p-0.5 bg-[#0B0F17] border border-slate-800 rounded-lg">
               <button
                 onClick={() => handleSwitchAccount('PRACTICE')}
-                className={`px-2 py-1 rounded-md font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
+                className={`px-2 py-1 rounded-md font-semibold text-[11px] sm:text-xs transition-all duration-200 ease-out whitespace-nowrap cursor-pointer active:scale-95 ${
                   connectionStatus.activeBalanceType === 'PRACTICE'
-                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/20'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Conta Demo
+                Demo
               </button>
               <button
                 onClick={() => handleSwitchAccount('REAL')}
-                className={`px-2 py-1 rounded-md font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
+                className={`px-2 py-1 rounded-md font-semibold text-[11px] sm:text-xs transition-all duration-200 ease-out whitespace-nowrap cursor-pointer active:scale-95 ${
                   connectionStatus.activeBalanceType === 'REAL'
-                    ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                    ? 'bg-emerald-500 text-slate-950 font-bold shadow-md shadow-emerald-500/20'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                Conta Real
+                Real
               </button>
             </div>
 
             <div className="font-mono tabular-nums">
-              <span className="text-slate-400">Saldo: </span>
-              <strong className="text-white text-sm">
+              <span className="text-slate-400 text-[11px]">Saldo: </span>
+              <strong className="text-white text-xs sm:text-sm font-bold">
                 R${' '}
                 {activeBalanceValue.toLocaleString('pt-BR', {
                   minimumFractionDigits: 2,
@@ -1244,10 +1253,10 @@ export default function App() {
 
             <span className="text-slate-700 hidden md:inline">|</span>
 
-            {/* Inline Quick Inputs for Entrada, Stop Win & Stop Loss */}
-            <div className="flex flex-wrap items-center gap-2 font-mono tabular-nums">
+            {/* Desktop Inline Inputs */}
+            <div className="hidden md:flex items-center gap-2.5 font-mono tabular-nums text-xs">
               <label className="flex items-center gap-1 text-slate-300">
-                <span className="text-slate-400">Entrada R$:</span>
+                <span className="text-slate-400 text-[11px]">Entrada:</span>
                 <input
                   type="number"
                   min={2}
@@ -1258,12 +1267,12 @@ export default function App() {
                       baseEntryAmount: Math.max(2, Number(e.target.value)),
                     }))
                   }
-                  className="w-14 sm:w-16 px-2 py-1 bg-[#0B0F17] border border-slate-700 rounded text-white text-[10px] sm:text-xs font-bold focus:outline-none focus:border-blue-500"
+                  className="w-14 px-2 py-1 bg-[#0B0F17] border border-slate-700 rounded text-white text-xs font-bold focus:outline-none focus:border-blue-500"
                 />
               </label>
 
               <label className="flex items-center gap-1 text-emerald-400">
-                <span>Stop Win:</span>
+                <span className="text-[11px]">Stop Win:</span>
                 <input
                   type="number"
                   min={5}
@@ -1274,12 +1283,12 @@ export default function App() {
                       stopWin: Math.max(5, Number(e.target.value)),
                     }))
                   }
-                  className="w-14 sm:w-16 px-2 py-1 bg-[#0B0F17] border border-emerald-800/70 rounded text-emerald-400 text-[10px] sm:text-xs font-bold focus:outline-none focus:border-emerald-500"
+                  className="w-14 px-2 py-1 bg-[#0B0F17] border border-emerald-800/70 rounded text-emerald-400 text-xs font-bold focus:outline-none focus:border-emerald-500"
                 />
               </label>
 
               <label className="flex items-center gap-1 text-red-400">
-                <span>Stop Loss:</span>
+                <span className="text-[11px]">Stop Loss:</span>
                 <input
                   type="number"
                   min={5}
@@ -1290,89 +1299,99 @@ export default function App() {
                       stopLoss: Math.max(5, Number(e.target.value)),
                     }))
                   }
-                  className="w-14 sm:w-16 px-2 py-1 bg-[#0B0F17] border border-red-800/70 rounded text-red-400 text-[10px] sm:text-xs font-bold focus:outline-none focus:border-red-500"
+                  className="w-14 px-2 py-1 bg-[#0B0F17] border border-red-800/70 rounded text-red-400 text-xs font-bold focus:outline-none focus:border-red-500"
                 />
               </label>
-            </div>
 
-            <span className="text-slate-700 hidden xl:inline">|</span>
+              <span className="text-slate-700">|</span>
 
-            <div className="font-mono tabular-nums">
-              <span className="text-slate-400">Sessão: </span>
-              <strong
-                className={
-                  riskState.sessionProfit >= 0 ? 'text-emerald-400' : 'text-red-400'
-                }
-              >
-                {riskState.sessionProfit >= 0 ? '+' : ''}R${' '}
-                {riskState.sessionProfit.toFixed(2)}
-              </strong>
-              <span className="text-slate-500 ml-1.5">
-                ({riskState.totalWins}W / {riskState.totalLosses}L)
-              </span>
+              <div>
+                <span className="text-slate-400 text-[11px]">Sessão: </span>
+                <strong
+                  className={
+                    riskState.sessionProfit >= 0 ? 'text-emerald-400' : 'text-red-400'
+                  }
+                >
+                  {riskState.sessionProfit >= 0 ? '+' : ''}R${' '}
+                  {riskState.sessionProfit.toFixed(2)}
+                </strong>
+                <span className="text-slate-500 text-[11px] ml-1">
+                  ({riskState.totalWins}W / {riskState.totalLosses}L)
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Right: Prominent Page Switcher Buttons & Master Bot Toggle */}
-          <div className="flex flex-wrap items-center gap-2 md:justify-end">
-            <button
-              onClick={() => setActiveTab('CATALOG')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] sm:text-xs font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
-                activeTab === 'CATALOG'
-                  ? 'bg-blue-600 border-blue-500 text-white shadow-md shadow-blue-500/20'
-                  : 'bg-[#0B0F17] border-slate-700 text-slate-200 hover:border-blue-500 hover:text-white'
-              }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5 text-blue-400" />
-              Catalogação
-            </button>
+          {/* Mobile Quick Inputs Grid (3 equal columns on mobile for thumb convenience) */}
+          <div className="grid grid-cols-3 gap-2 md:hidden font-mono tabular-nums">
+            <div className="bg-[#0B0F17] border border-slate-800 rounded-lg p-1.5 flex flex-col">
+              <span className="text-[9px] text-slate-400 uppercase font-sans">Entrada R$</span>
+              <input
+                type="number"
+                min={2}
+                value={riskConfig.baseEntryAmount}
+                onChange={(e) =>
+                  setRiskConfig((prev) => ({
+                    ...prev,
+                    baseEntryAmount: Math.max(2, Number(e.target.value)),
+                  }))
+                }
+                className="w-full bg-transparent text-white text-xs font-bold focus:outline-none py-0.5"
+              />
+            </div>
 
-            <button
-              onClick={() => setActiveTab('SIGNALS')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] sm:text-xs font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
-                activeTab === 'SIGNALS'
-                  ? 'bg-amber-600 border-amber-500 text-white shadow-md shadow-amber-500/20'
-                  : 'bg-[#0B0F17] border-slate-700 text-slate-200 hover:border-amber-500 hover:text-white'
-              }`}
-            >
-              <ListPlus className="w-3.5 h-3.5 text-amber-400" />
-              Lista de Sinais
-              {scheduledSignals.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.2 text-[9px] bg-[#0B0F17] text-amber-300 font-mono rounded">
-                  {scheduledSignals.length}
-                </span>
-              )}
-            </button>
+            <div className="bg-[#0B0F17] border border-emerald-900/60 rounded-lg p-1.5 flex flex-col">
+              <span className="text-[9px] text-emerald-400 uppercase font-sans">Stop Win</span>
+              <input
+                type="number"
+                min={5}
+                value={riskConfig.stopWin}
+                onChange={(e) =>
+                  setRiskConfig((prev) => ({
+                    ...prev,
+                    stopWin: Math.max(5, Number(e.target.value)),
+                  }))
+                }
+                className="w-full bg-transparent text-emerald-400 text-xs font-bold focus:outline-none py-0.5"
+              />
+            </div>
 
-            <button
-              onClick={() => setActiveTab('RISK')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] sm:text-xs font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
-                activeTab === 'RISK'
-                  ? 'bg-blue-600 border-blue-500 text-white shadow-md shadow-blue-500/20'
-                  : 'bg-[#0B0F17] border-slate-700 text-slate-200 hover:border-blue-500 hover:text-white'
-              }`}
-            >
-              <Settings2 className="w-3.5 h-3.5 text-emerald-400" />
-              Stop & Entradas
-            </button>
+            <div className="bg-[#0B0F17] border border-rose-900/60 rounded-lg p-1.5 flex flex-col">
+              <span className="text-[9px] text-rose-400 uppercase font-sans">Stop Loss</span>
+              <input
+                type="number"
+                min={5}
+                value={riskConfig.stopLoss}
+                onChange={(e) =>
+                  setRiskConfig((prev) => ({
+                    ...prev,
+                    stopLoss: Math.max(5, Number(e.target.value)),
+                  }))
+                }
+                className="w-full bg-transparent text-rose-400 text-xs font-bold focus:outline-none py-0.5"
+              />
+            </div>
+          </div>
 
+          {/* Master Bot 24/7 Action Button (full width on mobile, compact on desktop) */}
+          <div className="flex items-center gap-2">
             <button
               onClick={handleToggleBot}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
+              className={`w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 md:py-1.5 rounded-lg text-xs font-bold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer active:scale-95 ${
                 isBotRunning
-                  ? 'bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-500/20'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-500/20'
+                  ? 'bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-500/25 animate-pulse'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-500/25'
               }`}
             >
               {isBotRunning ? (
                 <>
-                  <Pause className="w-3.5 h-3.5" />
-                  Pausar Robô 24/7
+                  <Pause className="w-4 h-4 shrink-0" />
+                  <span>Pausar Robô 24/7</span>
                 </>
               ) : (
                 <>
-                  <Bot className="w-3.5 h-3.5" />
-                  Iniciar Robô 24/7
+                  <Bot className="w-4 h-4 shrink-0" />
+                  <span>Iniciar Robô 24/7 ({selectedBotAssetIds.length} Pares)</span>
                 </>
               )}
             </button>
@@ -1389,7 +1408,7 @@ export default function App() {
       </div>
 
       {/* Main Content Container */}
-      <main className="flex-1 max-w-[1440px] w-full mx-auto px-6 py-6">
+      <main className="flex-1 max-w-[1440px] w-full mx-auto px-3 sm:px-6 py-3.5 sm:py-6 pb-24 md:pb-6">
         {!connectionStatus.authenticated && (
           <div className="mb-6 bg-[#111827] border border-blue-500/40 rounded-lg p-4 flex flex-wrap items-center justify-between gap-4">
             <div className="space-y-1">
@@ -1522,111 +1541,74 @@ export default function App() {
 
         {activeTab === 'TERMINAL' && (
           <div className="space-y-6">
-            {/* Asset Quick Bar, Normal vs OTC Market Selector & Timeframe Switch */}
+            {/* Integrated Asset Bar & Timeframe Switch (Clean, minimal footprint) */}
             <div className="bg-[#111827] border border-slate-800 rounded-lg p-3 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                {/* Market Filter: Todos | Mercado Normal | Mercado OTC */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="inline-flex p-1 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs">
-                    <button
-                      onClick={() => setTerminalMarketFilter('ALL')}
-                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
-                        terminalMarketFilter === 'ALL'
-                          ? 'bg-blue-600 text-white'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      Todos ({catalogStats.length})
-                    </button>
-                    <button
-                      onClick={() => setTerminalMarketFilter('NORMAL')}
-                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
-                        terminalMarketFilter === 'NORMAL'
-                          ? 'bg-emerald-600 text-white'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      Mercado Normal ({catalogStats.filter((s) => !s.asset.isOtc).length})
-                    </button>
-                    <button
-                      onClick={() => setTerminalMarketFilter('OTC')}
-                      className={`px-2.5 py-1 rounded font-medium transition-colors cursor-pointer ${
-                        terminalMarketFilter === 'OTC'
-                          ? 'bg-amber-600 text-white'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      Mercado OTC ({catalogStats.filter((s) => s.asset.isOtc).length})
-                    </button>
-                  </div>
+                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base sm:text-lg font-display font-bold text-white tracking-tight">
+                    {activeAsset.ticker}
+                  </span>
+                  <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                    {activeAsset.payout}% Payout
+                  </span>
+                  {activeAsset.isOtc ? (
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
+                      OTC
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30 font-semibold">
+                      NORMAL
+                    </span>
+                  )}
+                </div>
 
+                <div className="inline-flex p-0.5 bg-[#0B0F17] border border-slate-800 rounded-lg text-xs font-mono">
+                  {([60, 300] as TimeframeSeconds[]).map((tf) => (
+                    <button
+                      key={tf}
+                      onClick={() =>
+                        setStrategyConfig((prev) => ({ ...prev, timeframe: tf }))
+                      }
+                      className={`px-2.5 py-1 rounded transition-colors cursor-pointer font-medium ${
+                        strategyConfig.timeframe === tf
+                          ? 'bg-blue-600 text-white font-bold'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      M{tf / 60}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quick Pair Chips & Expand Button */}
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
+                {catalogStats.slice(0, 5).map((item) => (
                   <button
-                    onClick={() => setShowAllPairsDrawer((prev) => !prev)}
-                    className="px-3 py-1.5 bg-[#0B0F17] hover:bg-slate-800 border border-slate-700 rounded-lg text-xs font-semibold text-blue-400 transition-colors cursor-pointer"
+                    key={item.asset.id}
+                    onClick={() => setSelectedAssetId(item.asset.id)}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      selectedAssetId === item.asset.id
+                        ? 'bg-blue-600 text-white font-bold shadow-sm'
+                        : 'bg-[#0B0F17] hover:bg-slate-800 text-slate-300 border border-slate-800'
+                    }`}
                   >
-                    {showAllPairsDrawer
-                      ? 'Ocultar Grade Completa de Pares'
-                      : 'Ver Todos os 30 Pares (Normal & OTC)'}
+                    <span>{item.asset.ticker.replace(' (OTC)', '')}</span>
+                    <span className="ml-1 text-[10px] text-emerald-400 font-mono">
+                      {item.winRateGale1.toFixed(0)}%
+                    </span>
                   </button>
-                </div>
+                ))}
 
-                <div className="flex items-center gap-2 shrink-0">
-                  <div className="grid grid-cols-2 gap-1 p-1 bg-[#0B0F17] border border-slate-800 rounded-lg">
-                    {([60, 300] as TimeframeSeconds[]).map((tf) => (
-                      <button
-                        key={tf}
-                        onClick={() =>
-                          setStrategyConfig((prev) => ({ ...prev, timeframe: tf }))
-                        }
-                        className={`px-2.5 py-1 text-xs font-mono font-medium rounded transition-colors cursor-pointer ${
-                          strategyConfig.timeframe === tf
-                            ? 'bg-blue-600 text-white'
-                            : 'text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        M{tf / 60}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <button
+                  onClick={() => setShowAllPairsDrawer((prev) => !prev)}
+                  className="px-2.5 py-1 bg-[#0B0F17] hover:bg-slate-800 border border-slate-700 rounded-md text-xs font-semibold text-blue-400 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  {showAllPairsDrawer ? 'Ocultar Pares' : '+ Mais Pares (30)'}
+                </button>
               </div>
-
-              {/* Scrollable Pair Strip */}
-              <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                {catalogStats
-                  .filter((item) => {
-                    if (terminalMarketFilter === 'NORMAL') return !item.asset.isOtc;
-                    if (terminalMarketFilter === 'OTC') return item.asset.isOtc;
-                    return true;
-                  })
-                  .map((item) => {
-                    const isSelected = item.asset.id === selectedAssetId;
-                    const isBotMonitored = selectedBotAssetIds.includes(item.asset.id);
-                    return (
-                      <button
-                        key={item.asset.id}
-                        onClick={() => setSelectedAssetId(item.asset.id)}
-                        className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                          isSelected
-                            ? 'bg-blue-600 border-blue-500 text-white'
-                            : 'bg-[#0B0F17] border-slate-800 text-slate-300 hover:border-slate-700'
-                        }`}
-                      >
-                        <span>{item.asset.ticker}</span>
-                        <span
-                          className={`ml-2 font-mono tabular-nums text-[11px] ${
-                            isSelected ? 'text-blue-100' : 'text-emerald-400'
-                          }`}
-                        >
-                          {item.winRateGale1.toFixed(0)}%
-                        </span>
-                        {isBotMonitored && (
-                          <span className="ml-1.5 text-[10px] opacity-80">· Robô</span>
-                        )}
-                      </button>
-                    );
-                  })}
-              </div>
+            </div>
 
               {/* Expandable Full Grid: Mercado Normal (15 Pares) vs Mercado OTC (15 Pares) */}
               {showAllPairsDrawer && (
@@ -1835,111 +1817,108 @@ export default function App() {
                   currencySymbol={connectionStatus.currency === 'USD' ? '$' : 'R$'}
                 />
 
-                {/* Live Indicator Telemetry Grid */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                  <div className="bg-[#111827] border border-slate-800 rounded-lg p-3">
-                    <div className="text-[11px] text-slate-400">
-                      EMA {strategyConfig.emaFastPeriod} / {strategyConfig.emaSlowPeriod}
-                    </div>
-                    <div
-                      className={`mt-1 text-xs font-mono font-bold ${
-                        technicalSnapshot.emaTrend === 'BULLISH'
-                          ? 'text-emerald-400'
-                          : technicalSnapshot.emaTrend === 'BEARISH'
-                          ? 'text-red-400'
-                          : 'text-slate-300'
-                      }`}
-                    >
-                      {technicalSnapshot.emaTrend === 'BULLISH'
-                        ? 'ALTA (9 > 21)'
-                        : technicalSnapshot.emaTrend === 'BEARISH'
-                        ? 'BAIXA (9 < 21)'
-                        : 'NEUTRO'}
-                    </div>
-                  </div>
-
-                  <div className="bg-[#111827] border border-slate-800 rounded-lg p-3">
-                    <div className="text-[11px] text-slate-400">
-                      RSI ({strategyConfig.rsiPeriod})
-                    </div>
-                    <div className="mt-1 text-xs font-mono tabular-nums font-bold text-white">
-                      {technicalSnapshot.rsi14.toFixed(1)} ·{' '}
+                {/* High-Density Unified Technical Indicators Bar */}
+                <div className="bg-[#111827] border border-slate-800 rounded-lg px-3.5 py-2.5">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-4 items-center">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 font-medium">EMA {strategyConfig.emaFastPeriod}/{strategyConfig.emaSlowPeriod}</span>
                       <span
-                        className={
-                          technicalSnapshot.rsiZone === 'OVERBOUGHT'
-                            ? 'text-red-400'
-                            : technicalSnapshot.rsiZone === 'OVERSOLD'
+                        className={`font-mono font-bold text-xs truncate ${
+                          technicalSnapshot.emaTrend === 'BULLISH'
                             ? 'text-emerald-400'
-                            : 'text-slate-400'
-                        }
+                            : technicalSnapshot.emaTrend === 'BEARISH'
+                            ? 'text-rose-400'
+                            : 'text-slate-300'
+                        }`}
                       >
-                        {technicalSnapshot.rsiZone === 'OVERBOUGHT'
-                          ? 'Sobrecompra'
-                          : technicalSnapshot.rsiZone === 'OVERSOLD'
-                          ? 'Sobrevenda'
+                        {technicalSnapshot.emaTrend === 'BULLISH'
+                          ? 'Alta (9 > 21)'
+                          : technicalSnapshot.emaTrend === 'BEARISH'
+                          ? 'Baixa (9 < 21)'
                           : 'Neutro'}
                       </span>
                     </div>
-                  </div>
 
-                  <div className="bg-[#111827] border border-slate-800 rounded-lg p-3">
-                    <div className="text-[11px] text-slate-400">Bandas de Bollinger</div>
-                    <div className="mt-1 text-xs font-mono font-bold text-indigo-300">
-                      {technicalSnapshot.bbPosition === 'ABOVE_UPPER'
-                        ? 'Rompeu Banda Sup.'
-                        : technicalSnapshot.bbPosition === 'BELOW_LOWER'
-                        ? 'Rompeu Banda Inf.'
-                        : 'Dentro do Canal'}
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 font-medium">RSI ({strategyConfig.rsiPeriod})</span>
+                      <div className="font-mono tabular-nums font-bold text-xs text-white flex items-center gap-1">
+                        <span>{technicalSnapshot.rsi14.toFixed(1)}</span>
+                        <span
+                          className={`text-[10px] font-sans ${
+                            technicalSnapshot.rsiZone === 'OVERBOUGHT'
+                              ? 'text-rose-400'
+                              : technicalSnapshot.rsiZone === 'OVERSOLD'
+                              ? 'text-emerald-400'
+                              : 'text-slate-400'
+                          }`}
+                        >
+                          ({technicalSnapshot.rsiZone === 'OVERBOUGHT'
+                            ? 'Sobrecompra'
+                            : technicalSnapshot.rsiZone === 'OVERSOLD'
+                            ? 'Sobrevenda'
+                            : 'Neutro'})
+                        </span>
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="bg-[#111827] border border-slate-800 rounded-lg p-3">
-                    <div className="text-[11px] text-slate-400">MACD Histograma</div>
-                    <div
-                      className={`mt-1 text-xs font-mono tabular-nums font-bold ${
-                        technicalSnapshot.macdHistogram >= 0
-                          ? 'text-emerald-400'
-                          : 'text-red-400'
-                      }`}
-                    >
-                      {technicalSnapshot.macdHistogram >= 0 ? '+' : ''}
-                      {technicalSnapshot.macdHistogram.toFixed(5)}
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 font-medium">Bollinger (20, 2)</span>
+                      <span className="font-mono font-bold text-xs text-indigo-300 truncate">
+                        {technicalSnapshot.bbPosition === 'ABOVE_UPPER'
+                          ? 'Rompeu Sup.'
+                          : technicalSnapshot.bbPosition === 'BELOW_LOWER'
+                          ? 'Rompeu Inf.'
+                          : 'Dentro do Canal'}
+                      </span>
                     </div>
-                  </div>
 
-                  <div className="bg-[#111827] border border-slate-800 rounded-lg p-3">
-                    <div className="text-[11px] text-slate-400">Suporte / Resistência</div>
-                    <div className="mt-1 text-xs font-mono font-bold text-slate-200">
-                      {technicalSnapshot.nearResistance
-                        ? 'Testando Topo'
-                        : technicalSnapshot.nearSupport
-                        ? 'Testando Fundo'
-                        : 'Meio de Zona'}
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 font-medium">MACD Hist</span>
+                      <span
+                        className={`font-mono tabular-nums font-bold text-xs ${
+                          technicalSnapshot.macdHistogram >= 0
+                            ? 'text-emerald-400'
+                            : 'text-rose-400'
+                        }`}
+                      >
+                        {technicalSnapshot.macdHistogram >= 0 ? '+' : ''}
+                        {technicalSnapshot.macdHistogram.toFixed(5)}
+                      </span>
                     </div>
-                  </div>
 
-                  <div className="bg-[#111827] border border-slate-800 rounded-lg p-3">
-                    <div className="text-[11px] text-slate-400">Price Action</div>
-                    <div className="mt-1 text-xs font-mono font-bold text-amber-300 truncate">
-                      {technicalSnapshot.priceActionPattern === 'NONE'
-                        ? 'Formação Padrão'
-                        : technicalSnapshot.priceActionPattern.replace('_', ' ')}
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 font-medium">S / R Auto</span>
+                      <span className="font-mono font-bold text-xs text-slate-200 truncate">
+                        {technicalSnapshot.nearResistance
+                          ? 'Testando Topo'
+                          : technicalSnapshot.nearSupport
+                          ? 'Testando Fundo'
+                          : 'Zona Neutra'}
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 font-medium">Price Action</span>
+                      <span className="font-mono font-bold text-xs text-amber-300 truncate">
+                        {technicalSnapshot.priceActionPattern === 'NONE'
+                          ? 'Formação Padrão'
+                          : technicalSnapshot.priceActionPattern.replace('_', ' ')}
+                      </span>
                     </div>
                   </div>
                 </div>
               </div>
 
               {/* Right 4 Columns: MHI Quadrant Scanner + Direct Order Execution */}
-              <div className="lg:col-span-4 bg-[#111827] border border-slate-800 rounded-lg p-5 flex flex-col justify-between space-y-5">
-                <div className="space-y-4">
+              <div className="lg:col-span-4 bg-[#111827] border border-slate-800 rounded-lg p-4 sm:p-5 flex flex-col justify-between space-y-4">
+                <div className="space-y-3.5">
                   <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                     <div>
                       <h2 className="text-sm font-display font-bold text-white">
-                        Scanner de Quadrante MHI & Confluência
+                        Painel de Operações MHI
                       </h2>
                       <p className="text-[11px] text-slate-400">
-                        {strategyConfig.mhiVariant.replace('_', ' ')} ·{' '}
-                        {strategyConfig.mhiMode} · Payout {activeAsset.payout}%
+                        {strategyConfig.mhiVariant.replace('_', ' ')} · {strategyConfig.mhiMode} · Payout {activeAsset.payout}%
                       </p>
                     </div>
                     <div className="text-right font-mono tabular-nums">
@@ -1951,37 +1930,40 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Last 3 Base Candles of the Quadrant */}
+                  {/* 3 Base Candles of the Quadrant (Compact) */}
                   <div>
-                    <div className="text-xs text-slate-400 mb-2">
-                      3 Últimas Velas Base do Quadrante:
+                    <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">
+                      <span>Velas Base ({strategyConfig.mhiVariant.replace('_', ' ')}):</span>
+                      <span className="text-[10px] text-slate-500 font-mono">3ª · 2ª · 1ª</span>
                     </div>
                     <div className="grid grid-cols-3 gap-2">
                       {(
                         [
-                          { label: '3ª Antepenúltima', color: mhiAnalysis.c1Color },
-                          { label: '2ª Penúltima', color: mhiAnalysis.c2Color },
-                          { label: '1ª Última Vela', color: mhiAnalysis.c3Color },
+                          { label: '3ª Vela', color: mhiAnalysis.c1Color },
+                          { label: '2ª Vela', color: mhiAnalysis.c2Color },
+                          { label: '1ª Vela', color: mhiAnalysis.c3Color },
                         ] as const
                       ).map((c, idx) => (
                         <div
                           key={idx}
-                          className={`p-2.5 rounded-lg border text-center font-mono text-xs font-bold ${
+                          className={`py-1.5 px-2 rounded-lg border text-center font-mono text-xs font-bold transition-all ${
                             c.color === 'GREEN'
-                              ? 'bg-emerald-950/40 border-emerald-700/70 text-emerald-400'
+                              ? 'bg-emerald-950/40 border-emerald-600/60 text-emerald-400'
                               : c.color === 'RED'
-                              ? 'bg-red-950/40 border-red-700/70 text-red-400'
+                              ? 'bg-rose-950/40 border-rose-600/60 text-rose-400'
                               : 'bg-slate-900 border-slate-700 text-slate-400'
                           }`}
                         >
-                          <div className="text-[10px] font-sans font-normal text-slate-400 mb-0.5">
+                          <div className="text-[9px] font-sans font-normal text-slate-400 uppercase tracking-wider">
                             {c.label}
                           </div>
-                          {c.color === 'GREEN'
-                            ? 'VERDE (Alta)'
-                            : c.color === 'RED'
-                            ? 'VERMELHA'
-                            : 'DOJI'}
+                          <div className="text-[11px] font-bold mt-0.5">
+                            {c.color === 'GREEN'
+                              ? 'ALTA 🟢'
+                              : c.color === 'RED'
+                              ? 'BAIXA 🔴'
+                              : 'DOJI ⚪'}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1989,12 +1971,12 @@ export default function App() {
 
                   {/* Live Pre-Signal Verdict & Countdown Panel */}
                   <div
-                    className={`p-3.5 rounded-lg border transition-all space-y-3 ${
+                    className={`p-3 rounded-lg border transition-all space-y-2.5 ${
                       mhiAnalysis.isPreSignal &&
                       (mhiAnalysis.finalDirection === 'CALL' || mhiAnalysis.finalDirection === 'PUT')
-                        ? 'bg-blue-950/60 border-blue-500/80 shadow-lg shadow-blue-950/40'
+                        ? 'bg-blue-950/50 border-blue-500/80 shadow-md shadow-blue-950/40'
                         : mhiAnalysis.finalDirection === 'BLOCKED'
-                        ? 'bg-amber-950/30 border-amber-500/40'
+                        ? 'bg-amber-950/25 border-amber-500/40'
                         : 'bg-[#0B0F17] border-slate-800'
                     }`}
                   >
@@ -2034,47 +2016,39 @@ export default function App() {
                     </div>
 
                     {/* Calculated Direction Banner */}
-                    <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center justify-between pt-0.5">
                       <span className="text-xs text-slate-400">Direção Prevista:</span>
                       <span
                         className={`font-mono text-sm font-bold ${
                           mhiAnalysis.finalDirection === 'CALL'
                             ? 'text-emerald-400'
                             : mhiAnalysis.finalDirection === 'PUT'
-                            ? 'text-red-400'
+                            ? 'text-rose-400'
                             : mhiAnalysis.finalDirection === 'BLOCKED'
                             ? 'text-amber-400'
                             : 'text-slate-400'
                         }`}
                       >
                         {mhiAnalysis.finalDirection === 'CALL'
-                          ? 'CALL (COMPRA)'
+                          ? 'CALL (COMPRA ▲)'
                           : mhiAnalysis.finalDirection === 'PUT'
-                          ? 'PUT (VENDA)'
+                          ? 'PUT (VENDA ▼)'
                           : mhiAnalysis.finalDirection === 'BLOCKED'
-                          ? 'BLOQUEADO POR FILTRO'
+                          ? 'BLOQUEADO'
                           : 'ANALISANDO'}
-                      </span>
-                    </div>
-
-                    {/* Delay & Execution Note */}
-                    <div className="text-[11px] text-slate-400 bg-[#111827] p-2 rounded border border-slate-800 flex items-center justify-between">
-                      <span>Gatilho de Disparo:</span>
-                      <span className="font-mono font-semibold text-blue-300">
-                        2º {strategyConfig.entryTimingSecond} (Anti-Delay IQ Option)
                       </span>
                     </div>
 
                     {/* Confluence Reasons */}
                     {mhiAnalysis.confluenceReasons.length > 0 && (
-                      <div className="space-y-1 pt-1 border-t border-slate-800/80">
+                      <div className="space-y-1 pt-1.5 border-t border-slate-800/80">
                         {mhiAnalysis.confluenceReasons.map((reason, i) => (
                           <div
                             key={i}
                             className="flex items-center gap-1.5 text-[11px] text-emerald-300"
                           >
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                            <span>{reason}</span>
+                            <span className="truncate">{reason}</span>
                           </div>
                         ))}
                       </div>
@@ -2082,87 +2056,107 @@ export default function App() {
 
                     {/* Block Reasons */}
                     {mhiAnalysis.blockReasons.length > 0 && (
-                      <div className="space-y-1 pt-1 border-t border-slate-800/80">
+                      <div className="space-y-1 pt-1.5 border-t border-slate-800/80">
                         {mhiAnalysis.blockReasons.map((reason, i) => (
                           <div
                             key={i}
                             className="flex items-center gap-1.5 text-[11px] text-amber-300"
                           >
                             <XCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                            <span>{reason}</span>
+                            <span className="truncate">{reason}</span>
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
 
-                  {/* Delay Anticipation Selector & Audio Alert Controls */}
-                  <div className="p-3 bg-[#0B0F17] border border-slate-800 rounded-lg space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+                  {/* Collapsible Quick Settings Accordion for Delay & Audio */}
+                  <div className="border border-slate-800 rounded-lg overflow-hidden bg-[#0B0F17]">
+                    <button
+                      type="button"
+                      onClick={() => setShowQuickSettings((prev) => !prev)}
+                      className="w-full flex items-center justify-between px-3 py-2 text-xs text-slate-300 hover:bg-slate-800/50 transition-colors cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2">
                         <Timer className="w-3.5 h-3.5 text-blue-400" />
-                        Antecipação contra Delay:
-                      </span>
-                      <div className="inline-flex p-0.5 bg-[#111827] border border-slate-800 rounded text-[10px] font-mono">
-                        {([59, 58, 0] as const).map((sec) => (
+                        <span className="font-medium">
+                          Anti-Delay ({strategyConfig.entryTimingSecond}s) · Alerta (
+                          {strategyConfig.audioAlertsEnabled ? 'Ativo' : 'Mudo'})
+                        </span>
+                      </div>
+                      {showQuickSettings ? (
+                        <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                    </button>
+
+                    {showQuickSettings && (
+                      <div className="p-3 border-t border-slate-800 space-y-2.5 bg-[#090D14]">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-slate-400">Segundo de Entrada:</span>
+                          <div className="inline-flex p-0.5 bg-[#111827] border border-slate-800 rounded text-[10px] font-mono">
+                            {([59, 58, 0] as const).map((sec) => (
+                              <button
+                                key={sec}
+                                onClick={() =>
+                                  setStrategyConfig((prev) => ({
+                                    ...prev,
+                                    entryTimingSecond: sec,
+                                  }))
+                                }
+                                className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                                  strategyConfig.entryTimingSecond === sec
+                                    ? 'bg-blue-600 text-white font-bold'
+                                    : 'text-slate-400 hover:text-white'
+                                }`}
+                              >
+                                {sec === 59 ? '59s (Rec)' : sec === 58 ? '58s' : '00s'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-800 text-[11px]">
                           <button
-                            key={sec}
                             onClick={() =>
                               setStrategyConfig((prev) => ({
                                 ...prev,
-                                entryTimingSecond: sec,
+                                audioAlertsEnabled: !prev.audioAlertsEnabled,
                               }))
                             }
-                            className={`px-2 py-0.5 rounded cursor-pointer transition-colors ${
-                              strategyConfig.entryTimingSecond === sec
-                                ? 'bg-blue-600 text-white font-bold'
-                                : 'text-slate-400 hover:text-white'
-                            }`}
+                            className="flex items-center gap-1.5 text-slate-300 hover:text-white transition-colors cursor-pointer"
                           >
-                            {sec === 59 ? '59s (Rec)' : sec === 58 ? '58s' : '00s'}
+                            {strategyConfig.audioAlertsEnabled ? (
+                              <>
+                                <Bell className="w-3.5 h-3.5 text-emerald-400" />
+                                <span>Som Pré-Sinal: <strong className="text-emerald-400">Ativado</strong></span>
+                              </>
+                            ) : (
+                              <>
+                                <BellOff className="w-3.5 h-3.5 text-slate-500" />
+                                <span>Som Pré-Sinal: <strong className="text-slate-500">Mudo</strong></span>
+                              </>
+                            )}
                           </button>
-                        ))}
+
+                          <button
+                            onClick={() => playTradingAudio('PRE_SIGNAL')}
+                            className="text-[10px] text-blue-400 hover:text-blue-300 px-2 py-0.5 rounded bg-blue-950/40 border border-blue-900/60 cursor-pointer"
+                          >
+                            Testar Som
+                          </button>
+                        </div>
                       </div>
-                    </div>
-
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-800/70 text-[11px]">
-                      <button
-                        onClick={() =>
-                          setStrategyConfig((prev) => ({
-                            ...prev,
-                            audioAlertsEnabled: !prev.audioAlertsEnabled,
-                          }))
-                        }
-                        className="flex items-center gap-1.5 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                      >
-                        {strategyConfig.audioAlertsEnabled ? (
-                          <>
-                            <Bell className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>Som de Pré-Sinal: <strong className="text-emerald-400">Ativado</strong></span>
-                          </>
-                        ) : (
-                          <>
-                            <BellOff className="w-3.5 h-3.5 text-slate-500" />
-                            <span>Som de Pré-Sinal: <strong className="text-slate-500">Mudo</strong></span>
-                          </>
-                        )}
-                      </button>
-
-                      <button
-                        onClick={() => playTradingAudio('PRE_SIGNAL')}
-                        className="text-[10px] text-blue-400 hover:text-blue-300 px-2 py-0.5 rounded bg-blue-950/40 border border-blue-900/60 cursor-pointer"
-                      >
-                        Ouvir Alerta
-                      </button>
-                    </div>
+                    )}
                   </div>
                 </div>
 
                 {/* Direct Order Execution Buttons */}
-                <div className="space-y-3 pt-2 border-t border-slate-800">
+                <div className="space-y-2.5 pt-2 border-t border-slate-800">
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-slate-400">
-                      Valor da Próxima Entrada ({riskConfig.managementMode}):
+                      Próxima Entrada ({riskConfig.managementMode}):
                     </span>
                     <span className="font-mono tabular-nums font-bold text-white">
                       R$ {riskState.nextCalculatedStake.toFixed(2)}
@@ -2181,7 +2175,7 @@ export default function App() {
                           `Manual / ${strategyConfig.mhiVariant.replace('_', ' ')}`
                         )
                       }
-                      className="flex items-center justify-center gap-2 py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-sm rounded-lg transition-colors cursor-pointer"
+                      className="flex items-center justify-center gap-2 py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-sm rounded-lg transition-colors cursor-pointer shadow-lg shadow-emerald-950/30"
                     >
                       <ArrowUpRight className="w-4 h-4" />
                       CALL (Acima)
@@ -2198,7 +2192,7 @@ export default function App() {
                           `Manual / ${strategyConfig.mhiVariant.replace('_', ' ')}`
                         )
                       }
-                      className="flex items-center justify-center gap-2 py-3 px-4 bg-red-600 hover:bg-red-500 text-white font-display font-bold text-sm rounded-lg transition-colors cursor-pointer"
+                      className="flex items-center justify-center gap-2 py-3 px-4 bg-rose-600 hover:bg-rose-500 text-white font-display font-bold text-sm rounded-lg transition-colors cursor-pointer shadow-lg shadow-rose-950/30"
                     >
                       <ArrowDownRight className="w-4 h-4" />
                       PUT (Abaixo)
@@ -2208,25 +2202,70 @@ export default function App() {
               </div>
             </div>
 
-            {/* Strategy & Indicator Confluence Switches + Live Order History */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Left 5 Columns: Strategy & Confluence Controls */}
-              <div className="lg:col-span-5 bg-[#111827] border border-slate-800 rounded-lg p-5 space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <Sliders className="w-4 h-4 text-blue-400" />
-                    <h2 className="text-sm font-display font-bold text-white">
-                      Motor de Estratégia & Filtros de Confluência
-                    </h2>
-                  </div>
+            {/* Bottom Segmented Workspace Switcher */}
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#111827] border border-slate-800 rounded-lg p-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTerminalBottomTab('ORDERS')}
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-semibold transition-colors cursor-pointer ${
+                      terminalBottomTab === 'ORDERS'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Histórico de Operações</span>
+                    {orders.length > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-blue-950 text-blue-200 border border-blue-400/40">
+                        {orders.length}
+                      </span>
+                    )}
+                  </button>
 
                   <button
-                    onClick={() => setActiveTab('CATALOG')}
-                    className="text-xs text-blue-400 hover:text-blue-300 font-medium cursor-pointer"
+                    type="button"
+                    onClick={() => setTerminalBottomTab('STRATEGY')}
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded text-xs font-semibold transition-colors cursor-pointer ${
+                      terminalBottomTab === 'STRATEGY'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
                   >
-                    Ver Assertividade →
+                    <Sliders className="w-3.5 h-3.5" />
+                    <span>Motor MHI & Filtros</span>
+                    <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] font-mono bg-emerald-950/60 text-emerald-300 border border-emerald-500/30">
+                      {strategyConfig.mhiVariant.replace('_', ' ')} · {strategyConfig.mhiMode}
+                    </span>
                   </button>
                 </div>
+
+                <div className="flex items-center gap-3">
+                  {terminalBottomTab === 'ORDERS' && orders.length > 0 && (
+                    <button
+                      onClick={handleClearOrders}
+                      className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-rose-400 transition-colors cursor-pointer px-2.5 py-1 rounded hover:bg-slate-800"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Limpar Histórico</span>
+                    </button>
+                  )}
+
+                  {terminalBottomTab === 'STRATEGY' && (
+                    <button
+                      onClick={() => setActiveTab('CATALOG')}
+                      className="text-xs text-blue-400 hover:text-blue-300 font-medium cursor-pointer"
+                    >
+                      Ver Assertividade no Catálogo →
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Strategy Engine Tab */}
+              {terminalBottomTab === 'STRATEGY' && (
+                <div className="bg-[#111827] border border-slate-800 rounded-lg p-4 sm:p-5 space-y-4">
 
                 {/* MHI Variant & Mode */}
                 <div className="grid grid-cols-2 gap-3">
@@ -2486,9 +2525,11 @@ export default function App() {
                   })}
                 </div>
               </div>
+            )}
 
-              {/* Right 7 Columns: Live Order History Table */}
-              <div className="lg:col-span-7 bg-[#111827] border border-slate-800 rounded-lg overflow-hidden flex flex-col">
+            {/* Orders History Tab */}
+            {terminalBottomTab === 'ORDERS' && (
+              <div className="bg-[#111827] border border-slate-800 rounded-lg overflow-hidden flex flex-col">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
                   <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-blue-400" />
@@ -2520,7 +2561,9 @@ export default function App() {
                     </div>
                   ) : (
                     <>
-                      <table className="w-full text-left border-collapse text-xs">
+                      {/* Desktop Table View */}
+                      <div className="hidden sm:block overflow-x-auto">
+                        <table className="w-full text-left border-collapse text-xs">
                         <thead>
                           <tr className="border-b border-slate-800 bg-[#0B0F17]/80 text-[11px] text-slate-400">
                             <th className="py-2.5 px-3">ID / Horário</th>
@@ -2667,41 +2710,148 @@ export default function App() {
                           })}
                         </tbody>
                       </table>
+                    </div>
 
-                      {orders.length > historyPageSize && (
-                        <div className="flex flex-col gap-2 border-t border-slate-800 bg-[#0B0F17]/80 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div className="text-[11px] text-slate-400">
-                            Página {historyPage} de {totalHistoryPages}
-                          </div>
+                    {/* Mobile High-Density Card List View */}
+                    <div className="sm:hidden divide-y divide-slate-800">
+                      {paginatedOrders.map((ord) => {
+                        const timeStr = new Date(ord.timestamp * 1000).toLocaleTimeString('pt-BR', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                        });
+                        return (
+                          <div key={ord.id} className="p-3 space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-white text-xs">{ord.assetTicker}</span>
+                                <span
+                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                    ord.direction === 'CALL'
+                                      ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/30'
+                                      : 'bg-rose-950/60 text-rose-400 border border-rose-500/30'
+                                  }`}
+                                >
+                                  {ord.direction === 'CALL' ? 'CALL ▲' : 'PUT ▼'}
+                                </span>
+                                {ord.galeStep > 0 && (
+                                  <span className="text-[10px] text-amber-300 font-mono">
+                                    Gale {ord.galeStep}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] font-mono text-slate-400">{timeStr}</span>
+                            </div>
 
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}
-                              disabled={historyPage === 1}
-                              className="px-2.5 py-1 rounded border border-slate-700 bg-slate-900 text-[11px] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:border-slate-500 hover:text-white transition-colors"
-                            >
-                              Anterior
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setHistoryPage((page) => Math.min(totalHistoryPages, page + 1))}
-                              disabled={historyPage >= totalHistoryPages}
-                              className="px-2.5 py-1 rounded border border-slate-700 bg-slate-900 text-[11px] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:border-slate-500 hover:text-white transition-colors"
-                            >
-                              Próxima
-                            </button>
+                            <div className="flex items-center justify-between text-xs font-mono tabular-nums">
+                              <span className="text-slate-400 text-[11px]">
+                                Lote: R$ {ord.amount.toFixed(2)} · Entr: {formatOrderPrice(ord.openPrice, ord.assetTicker)}
+                              </span>
+                              <div>
+                                {ord.status === 'OPEN' ? (
+                                  <span className="text-blue-400 font-semibold animate-pulse">EM ABERTO</span>
+                                ) : ord.status === 'WIN' ? (
+                                  <span className="text-emerald-400 font-bold">+R$ {ord.profit.toFixed(2)}</span>
+                                ) : ord.status === 'LOSS' ? (
+                                  <span className="text-rose-400 font-bold">-R$ {Math.abs(ord.profit).toFixed(2)}</span>
+                                ) : ord.status === 'REJECTED' ? (
+                                  <span className="text-amber-400 font-semibold">RECUSADA</span>
+                                ) : (
+                                  <span className="text-slate-400 font-bold">EMPATE</span>
+                                )}
+                              </div>
+                            </div>
                           </div>
+                        );
+                      })}
+                    </div>
+
+                    {orders.length > historyPageSize && (
+                      <div className="flex flex-col gap-2 border-t border-slate-800 bg-[#0B0F17]/80 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="text-[11px] text-slate-400">
+                          Página {historyPage} de {totalHistoryPages} ({orders.length} ordens)
                         </div>
-                      )}
-                    </>
-                  )}
-                </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}
+                            disabled={historyPage === 1}
+                            className="px-2.5 py-1 rounded border border-slate-700 bg-slate-900 text-[11px] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:border-slate-500 hover:text-white transition-colors"
+                          >
+                            Anterior
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setHistoryPage((page) => Math.min(totalHistoryPages, page + 1))}
+                            disabled={historyPage >= totalHistoryPages}
+                            className="px-2.5 py-1 rounded border border-slate-700 bg-slate-900 text-[11px] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:border-slate-500 hover:text-white transition-colors"
+                          >
+                            Próxima
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
-          </div>
-        )}
-      </main>
+          )}
+        </div>
+      </div>
+    )}
+  </main>
+
+      {/* Mobile Sticky Bottom Navigation Dock (md:hidden) */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0B0F17]/95 backdrop-blur-xl border-t border-slate-800 px-3 py-2 safe-area-pb">
+        <div className="grid grid-cols-5 gap-1 text-center">
+          <button
+            onClick={() => setActiveTab('TERMINAL')}
+            className={`flex flex-col items-center justify-center py-1 rounded transition-colors ${
+              activeTab === 'TERMINAL' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Radio className="w-4 h-4 mb-1" />
+            <span className="text-[10px]">Terminal</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('CATALOG')}
+            className={`flex flex-col items-center justify-center py-1 rounded transition-colors ${
+              activeTab === 'CATALOG' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 mb-1" />
+            <span className="text-[10px]">Catálogo</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('SIGNALS')}
+            className={`flex flex-col items-center justify-center py-1 rounded transition-colors ${
+              activeTab === 'SIGNALS' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <CalendarClock className="w-4 h-4 mb-1" />
+            <span className="text-[10px]">Sinais</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('RISK')}
+            className={`flex flex-col items-center justify-center py-1 rounded transition-colors ${
+              activeTab === 'RISK' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 mb-1" />
+            <span className="text-[10px]">Gestão</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('PERFORMANCE')}
+            className={`flex flex-col items-center justify-center py-1 rounded transition-colors ${
+              activeTab === 'PERFORMANCE' ? 'text-blue-400 font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <FileText className="w-4 h-4 mb-1" />
+            <span className="text-[10px]">Relatório</span>
+          </button>
+        </div>
+      </div>
 
       {/* Connect IQ Option Modal */}
       <ConnectModal
