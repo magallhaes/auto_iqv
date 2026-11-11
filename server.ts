@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
+import { computeTechnicalSnapshot } from './src/utils/indicators';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -58,6 +59,7 @@ interface ServerScheduledSignal {
     | 'BLOCKED_NEWS'
     | 'BLOCKED_PAYOUT'
     | 'BLOCKED_SIMULTANEOUS'
+    | 'BLOCKED_OVERLAP'
     | 'SKIPPED';
   galeStep?: 0 | 1 | 2;
   profit?: number;
@@ -93,6 +95,21 @@ interface ServerBotState {
     macroTrendPeriod?: number;
     macroTrendTimeframe?: 'CURRENT' | 'M5' | 'M15';
     macroTrendRule?: 'STRICT_BLOCK' | 'CONFLUENCE_SCORE';
+    useEmaFilter?: boolean;
+    emaFastPeriod?: number;
+    emaSlowPeriod?: number;
+    requireEmaAlignment?: boolean;
+    useRsiFilter?: boolean;
+    rsiPeriod?: number;
+    rsiOverbought?: number;
+    rsiOversold?: number;
+    rsiMode?: 'REVERSAL' | 'TREND';
+    useBollingerFilter?: boolean;
+    bbPeriod?: number;
+    bbStdDev?: number;
+    useMacdFilter?: boolean;
+    useSrFilter?: boolean;
+    usePriceActionFilter?: boolean;
   };
   signalListConfig: {
     enabled: boolean;
@@ -216,6 +233,19 @@ interface Candle {
   min: number;
   max: number;
   volume: number;
+}
+
+interface BotSignalCandidate {
+  source: 'SIGNAL_LIST' | 'STRATEGY';
+  assetId: number;
+  ticker: string;
+  direction: 'CALL' | 'PUT';
+  timeframe: number;
+  payout: number;
+  confluenceCount: number;
+  historicalScore?: number;
+  strategyLabel: string;
+  signal?: ServerScheduledSignal;
 }
 
 interface IQAsset {
@@ -2146,206 +2176,266 @@ class IQOptionBridge {
     return winRate + payoutBonus;
   }
 
+  private getTechnicalConfluenceCount(
+    candles: Candle[],
+    direction: 'CALL' | 'PUT',
+    includeMhiBase = false
+  ): number {
+    if (candles.length === 0) return includeMhiBase ? 1 : 0;
+
+    const config = this.botState.strategyConfig;
+    const snapshot = computeTechnicalSnapshot(candles, config);
+    const currentPrice = candles[candles.length - 1].close;
+    let count = includeMhiBase ? 1 : 0;
+
+    if (config.useMacroTrendFilter !== false) {
+      const aligned =
+        (direction === 'CALL' && snapshot.macroTrend === 'BULLISH') ||
+        (direction === 'PUT' && snapshot.macroTrend === 'BEARISH');
+      if (aligned) count += 1;
+    }
+
+    if (config.useEmaFilter !== false) {
+      const aligned =
+        direction === 'CALL'
+          ? snapshot.ema9 > snapshot.ema21 && currentPrice >= snapshot.ema21
+          : snapshot.ema9 < snapshot.ema21 && currentPrice <= snapshot.ema21;
+      if (aligned) count += 1;
+    }
+
+    if (config.useRsiFilter !== false) {
+      const aligned =
+        config.rsiMode === 'TREND'
+          ? direction === 'CALL'
+            ? snapshot.rsi14 >= 50
+            : snapshot.rsi14 <= 50
+          : direction === 'CALL'
+          ? snapshot.rsi14 < (config.rsiOverbought ?? 70)
+          : snapshot.rsi14 > (config.rsiOversold ?? 30);
+      if (aligned) count += 1;
+    }
+
+    if (config.useBollingerFilter !== false) {
+      const aligned =
+        direction === 'CALL'
+          ? snapshot.bbPosition !== 'ABOVE_UPPER'
+          : snapshot.bbPosition !== 'BELOW_LOWER';
+      if (aligned) count += 1;
+    }
+
+    if (config.useMacdFilter) {
+      const aligned =
+        direction === 'CALL'
+          ? snapshot.macdHistogram >= 0
+          : snapshot.macdHistogram <= 0;
+      if (aligned) count += 1;
+    }
+
+    if (config.useSrFilter !== false) {
+      const aligned = direction === 'CALL' ? !snapshot.nearResistance : !snapshot.nearSupport;
+      if (aligned) count += 1;
+    }
+
+    if (config.usePriceActionFilter !== false) {
+      const opposingPattern =
+        direction === 'CALL'
+          ? snapshot.priceActionPattern === 'BEARISH_ENGULFING' ||
+            snapshot.priceActionPattern === 'BEARISH_PINBAR'
+          : snapshot.priceActionPattern === 'BULLISH_ENGULFING' ||
+            snapshot.priceActionPattern === 'BULLISH_PINBAR';
+      if (!opposingPattern) count += 1;
+    }
+
+    return count;
+  }
+
   public runBackgroundBot(nowSec: number) {
     if (!this.botState.isRunning) return;
     if (this.botState.riskState.stopWinReached || this.botState.riskState.stopLossReached) return;
 
-    // Do not initiate new entries if an order or Gale sequence is currently OPEN
-    const hasOpenTrade = this.ordersStore.some((o) => o.status === 'OPEN');
-    if (hasOpenTrade) return;
+    // Keep at most one open position or Gale sequence at a time.
+    if (this.ordersStore.some((order) => order.status === 'OPEN')) return;
 
-    // 1. Signal List Execution
+    const candidates: BotSignalCandidate[] = [];
+    let botStateChanged = false;
+
     if (this.botState.botMode === 'SIGNAL_LIST' || this.botState.botMode === 'BOTH') {
-      for (const sig of this.botState.scheduledSignals) {
-        if (!sig.enabled) continue;
-        if (sig.status !== 'PENDING' && sig.status !== 'PRE_SIGNAL') continue;
-
-        const secondsRemaining = sig.targetTimestamp - nowSec;
-
-        // Pre-signal at <= 30 seconds
-        if (secondsRemaining <= 30 && secondsRemaining > 2 && sig.status === 'PENDING') {
-          sig.status = 'PRE_SIGNAL';
-          this.broadcast({ type: 'bot_state', payload: this.botState });
+      for (const signal of this.botState.scheduledSignals) {
+        if (!signal.enabled || (signal.status !== 'PENDING' && signal.status !== 'PRE_SIGNAL')) {
+          continue;
         }
 
-        // Trigger with delay anticipation
+        const secondsRemaining = signal.targetTimestamp - nowSec;
+        if (secondsRemaining <= 30 && secondsRemaining > 2 && signal.status === 'PENDING') {
+          signal.status = 'PRE_SIGNAL';
+          botStateChanged = true;
+        }
+
         const advance =
           this.botState.signalListConfig.entryAdvanceSeconds === 0
             ? 0
             : 60 - this.botState.signalListConfig.entryAdvanceSeconds;
-        const triggerTime = sig.targetTimestamp - advance;
+        const triggerTime = signal.targetTimestamp - advance;
+        if (nowSec < triggerTime || nowSec > triggerTime + 2) continue;
 
-        if (nowSec >= triggerTime && nowSec <= triggerTime + 2) {
-          // Check Trend Filter for Signal List if active
-          if (this.botState.signalListConfig.useEmaTrendFilter) {
-            const pairCandles = candleStore.get(getStoreKey(sig.assetId, sig.timeframe)) || [];
-            if (pairCandles.length >= 20) {
-              const closes = pairCandles.map((c) => c.close);
-              const emaArr = this.calculateEma(closes, 100);
-              const lastEma = emaArr[emaArr.length - 1];
-              const curPrice = closes[closes.length - 1];
-              if (lastEma) {
-                if (sig.direction === 'CALL' && curPrice < lastEma) {
-                  sig.status = 'BLOCKED_TREND';
-                  console.log(`[Bot Lista] ${sig.ticker} CALL bloqueado por Filtro de Tendência (Preço < EMA 100)`);
-                  saveBotStateToDisk(this.botState);
-                  this.broadcast({ type: 'bot_state', payload: this.botState });
-                  continue;
-                }
-                if (sig.direction === 'PUT' && curPrice > lastEma) {
-                  sig.status = 'BLOCKED_TREND';
-                  console.log(`[Bot Lista] ${sig.ticker} PUT bloqueado por Filtro de Tendência (Preço > EMA 100)`);
-                  saveBotStateToDisk(this.botState);
-                  this.broadcast({ type: 'bot_state', payload: this.botState });
-                  continue;
-                }
-              }
+        const pairCandles = candleStore.get(getStoreKey(signal.assetId, signal.timeframe)) || [];
+        let trendConfluence = 0;
+        if (this.botState.signalListConfig.useEmaTrendFilter && pairCandles.length >= 20) {
+          const closes = pairCandles.map((candle) => candle.close);
+          const emaArr = this.calculateEma(closes, 100);
+          const lastEma = emaArr[emaArr.length - 1];
+          const currentPrice = closes[closes.length - 1];
+          if (lastEma) {
+            const trendBlocked =
+              (signal.direction === 'CALL' && currentPrice < lastEma) ||
+              (signal.direction === 'PUT' && currentPrice > lastEma);
+            if (trendBlocked) {
+              signal.status = 'BLOCKED_TREND';
+              botStateChanged = true;
+              console.log(`[Bot Lista] ${signal.ticker} ${signal.direction} bloqueado por Filtro de Tendência (EMA 100)`);
+              continue;
             }
+            trendConfluence = 1;
           }
-
-          sig.status = 'EXECUTING';
-          const order = this.executeOrder({
-            assetId: sig.assetId,
-            ticker: sig.ticker,
-            direction: sig.direction,
-            amount: this.botState.riskConfig.baseEntryAmount,
-            instrumentType: 'binary',
-            accountType: this.botState.riskConfig.accountType,
-            timeframe: sig.timeframe,
-            galeStep: 0,
-            strategyLabel: `Lista: ${sig.timeStr} ${sig.ticker}`,
-            signalId: sig.id,
-          });
-          if (order) {
-            sig.orderId = order.id;
-          }
-
-          // Anti-sobreposição: Bloqueia sinais simultâneos no mesmo horário para não operar um em cima do outro
-          for (const otherSig of this.botState.scheduledSignals) {
-            if (otherSig.id !== sig.id && (otherSig.status === 'PENDING' || otherSig.status === 'PRE_SIGNAL')) {
-              const otherAdvance =
-                this.botState.signalListConfig.entryAdvanceSeconds === 0
-                  ? 0
-                  : 60 - this.botState.signalListConfig.entryAdvanceSeconds;
-              const otherTrigger = otherSig.targetTimestamp - otherAdvance;
-              if (Math.abs(otherTrigger - triggerTime) <= 2) {
-                otherSig.status = 'BLOCKED_SIMULTANEOUS';
-                console.log(
-                  `[Bot Lista] Anti-sobreposição: ${otherSig.ticker} ${otherSig.timeStr} bloqueado pois ${sig.ticker} já está sendo operado neste minuto.`
-                );
-              }
-            }
-          }
-
-          saveBotStateToDisk(this.botState);
-          this.broadcast({ type: 'bot_state', payload: this.botState });
-          break; // Trava estrita: executa apenas 1 sinal por segundo/candlestick
         }
+
+        const resolved = this.resolveActive(signal.assetId, signal.ticker);
+        candidates.push({
+          source: 'SIGNAL_LIST',
+          assetId: signal.assetId,
+          ticker: signal.ticker,
+          direction: signal.direction,
+          timeframe: signal.timeframe,
+          payout: resolved.payout,
+          confluenceCount:
+            trendConfluence + this.getTechnicalConfluenceCount(pairCandles, signal.direction),
+          strategyLabel: `Lista: ${signal.timeStr} ${signal.ticker}`,
+          signal,
+        });
       }
     }
 
-    // 2. MHI Strategy Execution
     if (this.botState.botMode === 'STRATEGY' || this.botState.botMode === 'BOTH') {
-      const hasOpenOrder = this.ordersStore.some((o) => o.status === 'OPEN');
-      if (!hasOpenOrder) {
-        const tf = this.botState.strategyConfig.timeframe || 60;
-        const quadrantSeconds = tf * 5;
-        const variantOffset =
-          this.botState.strategyConfig.mhiVariant === 'MHI_1'
-            ? 0
-            : this.botState.strategyConfig.mhiVariant === 'MHI_2'
-            ? 1
-            : 2;
+      const timeframe = this.botState.strategyConfig.timeframe || 60;
+      const quadrantSeconds = timeframe * 5;
+      const variantOffset =
+        this.botState.strategyConfig.mhiVariant === 'MHI_1'
+          ? 0
+          : this.botState.strategyConfig.mhiVariant === 'MHI_2'
+          ? 1
+          : 2;
+      const currentQuadrantStart = Math.floor(nowSec / quadrantSeconds) * quadrantSeconds;
+      let targetCandleStart = currentQuadrantStart + variantOffset * timeframe;
+      if (nowSec >= targetCandleStart + timeframe) {
+        targetCandleStart = currentQuadrantStart + quadrantSeconds + variantOffset * timeframe;
+      }
 
-        const currentQuadrantStart = Math.floor(nowSec / quadrantSeconds) * quadrantSeconds;
-        let targetCandleStart = currentQuadrantStart + variantOffset * tf;
-        if (nowSec >= targetCandleStart + tf) {
-          targetCandleStart = currentQuadrantStart + quadrantSeconds + variantOffset * tf;
-        }
+      const advance =
+        this.botState.strategyConfig.entryTimingSecond === 0
+          ? 0
+          : 60 - this.botState.strategyConfig.entryTimingSecond;
+      const triggerTime = targetCandleStart - advance;
+      const isTriggerWindow = nowSec >= triggerTime && nowSec <= triggerTime + 2;
 
-        const advance =
-          this.botState.strategyConfig.entryTimingSecond === 0
-            ? 0
-            : 60 - this.botState.strategyConfig.entryTimingSecond;
-        const triggerTime = targetCandleStart - advance;
+      if (isTriggerWindow && this.lastServerMhiTrigger !== targetCandleStart) {
+        this.lastServerMhiTrigger = targetCandleStart;
+        for (const assetId of this.botState.selectedBotAssetIds) {
+          const asset = DEFAULT_ASSETS.find((item) => item.id === assetId);
+          if (!asset) continue;
 
-        if (
-          nowSec >= triggerTime &&
-          nowSec <= triggerTime + 2 &&
-          this.lastServerMhiTrigger !== targetCandleStart
-        ) {
-          this.lastServerMhiTrigger = targetCandleStart;
+          const candles = candleStore.get(getStoreKey(assetId, timeframe)) || [];
+          if (candles.length < 5) continue;
 
-          // Seleção Inteligente do Melhor Par: Ordena os pares ativos pela taxa de assertividade e payout
-          const candidateAssetIds = [...this.botState.selectedBotAssetIds].sort((aId, bId) => {
-            const scoreA = this.computeAssetScore(aId, tf);
-            const scoreB = this.computeAssetScore(bId, tf);
-            return scoreB - scoreA;
-          });
+          const base = candles.slice(-3);
+          const greens = base.filter((candle) => candle.close > candle.open).length;
+          const reds = base.filter((candle) => candle.close < candle.open).length;
+          if (greens === reds) continue;
 
-          for (const assetId of candidateAssetIds) {
-            const asset = DEFAULT_ASSETS.find((a) => a.id === assetId);
-            if (!asset) continue;
-            const candles = candleStore.get(getStoreKey(assetId, tf)) || [];
-            if (candles.length < 5) continue;
+          const minorityGreen = greens < reds;
+          const targetColor =
+            this.botState.strategyConfig.mhiMode === 'MINORIA'
+              ? minorityGreen ? 'GREEN' : 'RED'
+              : minorityGreen ? 'RED' : 'GREEN';
+          const direction: 'CALL' | 'PUT' = targetColor === 'GREEN' ? 'CALL' : 'PUT';
+          const snapshot = computeTechnicalSnapshot(candles, this.botState.strategyConfig);
 
-            const base = candles.slice(-3);
-            const greens = base.filter((c) => c.close > c.open).length;
-            const reds = base.filter((c) => c.close < c.open).length;
-
-            if (greens !== reds) {
-              const minorityGreen = greens < reds;
-              const targetColor =
-                this.botState.strategyConfig.mhiMode === 'MINORIA'
-                  ? minorityGreen ? 'GREEN' : 'RED'
-                  : minorityGreen ? 'RED' : 'GREEN';
-              const direction: 'CALL' | 'PUT' = targetColor === 'GREEN' ? 'CALL' : 'PUT';
-
-              // Filtro Avançado de Trend Global (ex: bloqueia CALL se preço < EMA 200)
-              if (this.botState.strategyConfig.useMacroTrendFilter !== false) {
-                const macroPeriod = this.botState.strategyConfig.macroTrendPeriod || 200;
-                const allCloses = candles.map((c) => c.close);
-                const emaMacroArr = this.calculateEma(allCloses, macroPeriod);
-                const lastMacroEma = emaMacroArr[emaMacroArr.length - 1];
-                const currentPrice = allCloses[allCloses.length - 1];
-
-                if (lastMacroEma) {
-                  if (direction === 'CALL' && currentPrice < lastMacroEma) {
-                    console.log(
-                      `[MHI Bot] ${asset.ticker} CALL bloqueado pelo Filtro de Trend Global (Preço ${currentPrice} < EMA ${macroPeriod} ${lastMacroEma.toFixed(5)})`
-                    );
-                    continue;
-                  }
-                  if (direction === 'PUT' && currentPrice > lastMacroEma) {
-                    console.log(
-                      `[MHI Bot] ${asset.ticker} PUT bloqueado pelo Filtro de Trend Global (Preço ${currentPrice} > EMA ${macroPeriod} ${lastMacroEma.toFixed(5)})`
-                    );
-                    continue;
-                  }
-                }
-              }
-
-              console.log(
-                `[MHI Bot] Selecionado o melhor par ${asset.ticker} (Score de Assertividade: ${this.computeAssetScore(assetId, tf).toFixed(1)}%) para entrada ${direction}`
-              );
-
-              this.executeOrder({
-                assetId,
-                ticker: asset.ticker,
-                direction,
-                amount: this.botState.riskState.nextCalculatedStake || this.botState.riskConfig.baseEntryAmount,
-                instrumentType: 'binary',
-                accountType: this.botState.riskConfig.accountType,
-                timeframe: tf,
-                galeStep: 0,
-                strategyLabel: `${this.botState.strategyConfig.mhiVariant} ${this.botState.strategyConfig.mhiMode}`,
-              });
-              break; // Trava estrita: opera exclusivamente 1 melhor par por quadrante
-            }
+          if (
+            this.botState.strategyConfig.useMacroTrendFilter !== false &&
+            ((direction === 'CALL' && snapshot.macroTrend === 'BEARISH') ||
+              (direction === 'PUT' && snapshot.macroTrend === 'BULLISH'))
+          ) {
+            console.log(`[MHI Bot] ${asset.ticker} ${direction} bloqueado pelo Filtro de Trend Global`);
+            continue;
           }
+
+          const resolved = this.resolveActive(assetId, asset.ticker);
+          candidates.push({
+            source: 'STRATEGY',
+            assetId,
+            ticker: asset.ticker,
+            direction,
+            timeframe,
+            payout: resolved.payout,
+            confluenceCount: this.getTechnicalConfluenceCount(candles, direction, true),
+            historicalScore: this.computeAssetScore(assetId, timeframe),
+            strategyLabel: `${this.botState.strategyConfig.mhiVariant} ${this.botState.strategyConfig.mhiMode}`,
+          });
         }
       }
     }
+
+    if (candidates.length === 0) {
+      if (botStateChanged) {
+        saveBotStateToDisk(this.botState);
+        this.broadcast({ type: 'bot_state', payload: this.botState });
+      }
+      return;
+    }
+
+    candidates.sort(
+      (left, right) =>
+        right.confluenceCount - left.confluenceCount ||
+        right.payout - left.payout ||
+        (right.historicalScore || 0) - (left.historicalScore || 0) ||
+        left.assetId - right.assetId
+    );
+    const selectedCandidate = candidates[0];
+
+    for (const candidate of candidates.slice(1)) {
+      if (candidate.signal) {
+        candidate.signal.status = 'BLOCKED_OVERLAP';
+        botStateChanged = true;
+      }
+      console.log(
+        `[Anti-Overlapping] ${candidate.ticker} ${candidate.direction} ignorado; prioridade para ${selectedCandidate.ticker} (${selectedCandidate.confluenceCount} confluências, payout ${selectedCandidate.payout}%).`
+      );
+    }
+
+    if (selectedCandidate.signal) {
+      selectedCandidate.signal.status = 'EXECUTING';
+    }
+    const order = this.executeOrder({
+      assetId: selectedCandidate.assetId,
+      ticker: selectedCandidate.ticker,
+      direction: selectedCandidate.direction,
+      amount:
+        selectedCandidate.source === 'STRATEGY'
+          ? this.botState.riskState.nextCalculatedStake || this.botState.riskConfig.baseEntryAmount
+          : this.botState.riskConfig.baseEntryAmount,
+      instrumentType: 'binary',
+      accountType: this.botState.riskConfig.accountType,
+      timeframe: selectedCandidate.timeframe,
+      galeStep: 0,
+      strategyLabel: selectedCandidate.strategyLabel,
+      signalId: selectedCandidate.signal?.id,
+    });
+
+    if (selectedCandidate.signal) {
+      selectedCandidate.signal.orderId = order.id;
+      botStateChanged = true;
+    }
+    if (botStateChanged) saveBotStateToDisk(this.botState);
+    this.broadcast({ type: 'bot_state', payload: this.botState });
   }
 
   public switchAccount(accountType: 'PRACTICE' | 'REAL') {

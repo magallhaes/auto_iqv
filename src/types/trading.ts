@@ -265,6 +265,7 @@ export interface ScheduledSignal {
     | 'BLOCKED_NEWS'
     | 'BLOCKED_PAYOUT'
     | 'BLOCKED_SIMULTANEOUS'
+    | 'BLOCKED_OVERLAP'
     | 'SKIPPED';
   galeStep?: 0 | 1 | 2;
   profit?: number;
