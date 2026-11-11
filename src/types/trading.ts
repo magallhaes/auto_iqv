@@ -228,6 +228,7 @@ export interface EconomicNewsEvent {
 export interface IQConnectionStatus {
   connected: boolean;
   authenticated: boolean;
+  marketDataMode?: 'LIVE' | 'SIMULATED' | 'OFFLINE';
   connecting: boolean;
   email?: string;
   userId?: number;

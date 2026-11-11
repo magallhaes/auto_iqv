@@ -704,6 +704,11 @@ class IQOptionBridge {
     return {
       connected: this.connected,
       authenticated: this.authenticated,
+      marketDataMode: this.authenticated
+        ? this.ssid.startsWith('sim_session_')
+          ? 'SIMULATED'
+          : 'LIVE'
+        : 'OFFLINE',
       connecting: this.connecting,
       email: this.email,
       userId: this.userId,

@@ -28,6 +28,7 @@ interface CandlestickChartProps {
   assetId?: number;
   timeframe: number;
   secondsRemainingInCandle: number;
+  marketDataMode: 'LIVE' | 'SIMULATED' | 'OFFLINE';
   orders?: TradeOrder[];
   currencySymbol?: string;
 }
@@ -40,6 +41,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   assetId,
   timeframe,
   secondsRemainingInCandle,
+  marketDataMode,
   orders = [],
   currencySymbol = 'R$',
 }) => {
@@ -215,7 +217,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     return (
       <div className="h-[410px] flex items-center justify-center bg-[#0B0E14] border border-[#161D2A] rounded-lg text-slate-400 text-sm">
         <Activity className="w-4 h-4 mr-2 animate-spin text-blue-500" />
-        Carregando cotações reais da IQ Option...
+        Carregando candles do mercado...
       </div>
     );
   }
@@ -295,7 +297,15 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
         {/* Left: Asset Ticker Pill + Live Quote */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 bg-[#141A26] px-2.5 py-1 rounded border border-[#212B3E]">
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            <span
+              className={`w-2 h-2 rounded-full ${
+                marketDataMode === 'LIVE'
+                  ? 'bg-emerald-400'
+                  : marketDataMode === 'SIMULATED'
+                  ? 'bg-amber-400'
+                  : 'bg-slate-500'
+              }`}
+            />
             <span className="font-bold text-sm text-white tracking-wide">
               {assetTicker}
             </span>
@@ -600,7 +610,12 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
             fontFamily="JetBrains Mono, monospace"
             textAnchor="middle"
           >
-            IQ OPTION REAL STREAM · M{timeframe / 60}
+            {marketDataMode === 'LIVE'
+              ? 'IQ OPTION · AO VIVO'
+              : marketDataMode === 'SIMULATED'
+              ? 'SIMULAÇÃO LOCAL'
+              : 'SEM CONEXÃO IQ'}{' '}
+            · M{timeframe / 60}
           </text>
 
           {/* Horizontal Price Grid Lines */}

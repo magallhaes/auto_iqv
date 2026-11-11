@@ -1883,6 +1883,7 @@ export default function App() {
                   assetId={activeAsset.id}
                   timeframe={strategyConfig.timeframe}
                   secondsRemainingInCandle={secondsRemainingInCandle}
+                  marketDataMode={connectionStatus.marketDataMode || 'OFFLINE'}
                   orders={orders}
                   currencySymbol={connectionStatus.currency === 'USD' ? '$' : 'R$'}
                 />
