@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
 import http from 'http';
@@ -246,6 +247,15 @@ interface BotSignalCandidate {
   historicalScore?: number;
   strategyLabel: string;
   signal?: ServerScheduledSignal;
+}
+
+interface TelegramSettingsPatch {
+  enabled?: boolean;
+  chatId?: string;
+  token?: string;
+  clearToken?: boolean;
+  alertSignals?: boolean;
+  alertOrderResults?: boolean;
 }
 
 interface IQAsset {
@@ -533,6 +543,12 @@ class IQOptionBridge {
   public pending2FAToken = '';
   public ordersStore: TradeOrder[] = loadOrdersFromDisk();
   public botState: ServerBotState = loadBotStateFromDisk();
+  private telegramBotToken = process.env.TELEGRAM_BOT_TOKEN || '';
+  private telegramChatId = process.env.TELEGRAM_CHAT_ID || '';
+  private telegramEnabled =
+    Boolean(this.telegramBotToken && this.telegramChatId) && process.env.TELEGRAM_ENABLED !== 'false';
+  private telegramAlertSignals = true;
+  private telegramAlertOrderResults = true;
   private lastServerMhiTrigger = 0;
   public iqSocket: WebSocket | null = null;
   private reqCounter = 1;
@@ -747,6 +763,115 @@ class IQOptionBridge {
       requires2FA: this.requires2FA,
       wsLatencyMs: this.wsLatencyMs,
     };
+  }
+
+  public getTelegramSettings() {
+    return {
+      enabled: this.telegramEnabled,
+      chatId: this.telegramChatId,
+      tokenConfigured: Boolean(this.telegramBotToken),
+      alertSignals: this.telegramAlertSignals,
+      alertOrderResults: this.telegramAlertOrderResults,
+    };
+  }
+
+  public validateTelegramSettings(patch: TelegramSettingsPatch, requireCredentials = false) {
+    const tokenConfigured = patch.clearToken
+      ? false
+      : Boolean((typeof patch.token === 'string' && patch.token.trim()) || this.telegramBotToken);
+    const chatId = typeof patch.chatId === 'string' ? patch.chatId.trim() : this.telegramChatId;
+    const enabled = typeof patch.enabled === 'boolean' ? patch.enabled : this.telegramEnabled;
+    if ((enabled || requireCredentials) && (!tokenConfigured || !chatId)) {
+      return 'Informe o token do bot e o chat ID antes de ativar as notificações.';
+    }
+    return null;
+  }
+
+  public updateTelegramSettings(patch: TelegramSettingsPatch) {
+    if (typeof patch.token === 'string' && patch.token.trim()) {
+      this.telegramBotToken = patch.token.trim();
+    }
+    if (patch.clearToken) this.telegramBotToken = '';
+    if (typeof patch.chatId === 'string') this.telegramChatId = patch.chatId.trim();
+    if (typeof patch.enabled === 'boolean') this.telegramEnabled = patch.enabled;
+    if (typeof patch.alertSignals === 'boolean') this.telegramAlertSignals = patch.alertSignals;
+    if (typeof patch.alertOrderResults === 'boolean') {
+      this.telegramAlertOrderResults = patch.alertOrderResults;
+    }
+    return this.getTelegramSettings();
+  }
+
+  private async sendTelegramMessage(message: string, force = false) {
+    if (!this.telegramBotToken || !this.telegramChatId) {
+      return { success: false, message: 'Informe o token do bot e o chat ID.' };
+    }
+    if (!force && !this.telegramEnabled) {
+      return { success: false, message: 'Notificações do Telegram estão desativadas.' };
+    }
+
+    try {
+      const response = await fetch(
+        `https://api.telegram.org/bot${this.telegramBotToken}/sendMessage`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: this.telegramChatId, text: message }),
+        }
+      );
+      const result = (await response.json()) as { ok?: boolean; description?: string };
+      if (!response.ok || !result.ok) {
+        return {
+          success: false,
+          message: result.description || `Telegram respondeu HTTP ${response.status}.`,
+        };
+      }
+      return { success: true, message: 'Mensagem enviada pelo Telegram.' };
+    } catch {
+      return { success: false, message: 'Não foi possível conectar à API do Telegram.' };
+    }
+  }
+
+  public testTelegram() {
+    return this.sendTelegramMessage('QuantIQ: teste de notificações do Telegram recebido com sucesso.', true);
+  }
+
+  private notifyTelegramOrderEntry(order: TradeOrder) {
+    if (!this.telegramEnabled || !this.telegramAlertSignals) return;
+    const executionMode = this.ssid.startsWith('sim_session_') ? 'Simulação local' :
+      this.authenticated ? 'IQ Option' : 'Modo local';
+    const stage = order.galeStep === 0 ? 'Entrada inicial' : `Gale ${order.galeStep}`;
+    const message = [
+      'QuantIQ | SINAL DE ENTRADA',
+      `${order.assetTicker} · ${order.direction}`,
+      `Estratégia: ${order.strategyLabel}`,
+      `${stage} · ${executionMode}`,
+      `Valor: ${order.amount.toFixed(2)} ${this.currency}`,
+      `Preço: ${order.openPrice.toFixed(5)}`,
+      `Horário: ${new Date(order.timestamp * 1000).toLocaleString('pt-BR')}`,
+    ].join('\n');
+    void this.sendTelegramMessage(message);
+  }
+
+  private notifyTelegramOrderResult(order: TradeOrder) {
+    if (!this.telegramEnabled || !this.telegramAlertOrderResults) return;
+    const resultLabel: Record<TradeOrder['status'], string> = {
+      OPEN: 'EM ABERTO',
+      WIN: 'WIN',
+      LOSS: 'LOSS',
+      EQUAL: 'EMPATE',
+      REJECTED: 'REJEITADA',
+    };
+    const profit = `${order.profit >= 0 ? '+' : '-'}${Math.abs(order.profit).toFixed(2)} ${this.currency}`;
+    const message = [
+      'QuantIQ | RESULTADO DA ORDEM',
+      `${order.assetTicker} · ${order.direction} · ${resultLabel[order.status]}`,
+      `Estratégia: ${order.strategyLabel}`,
+      `Etapa: ${order.galeStep === 0 ? 'Entrada inicial' : `Gale ${order.galeStep}`}`,
+      `Resultado: ${profit}`,
+      `Fechamento: ${order.closePrice?.toFixed(5) || 'n/d'}`,
+      order.brokerMessage || '',
+    ].filter(Boolean).join('\n');
+    void this.sendTelegramMessage(message);
   }
 
   private nextRequestId(prefix = 'quantiq'): string {
@@ -1265,6 +1390,7 @@ class IQOptionBridge {
                 matchedOrder.brokerMessage = `Recusada: ${errorMsg}`;
                 matchedOrder.profit = 0;
                 this.adjustBalance(matchedOrder.accountType, matchedOrder.amount);
+                this.notifyTelegramOrderResult(matchedOrder);
                 saveOrdersToDisk(this.ordersStore);
                 this.broadcast({
                   type: 'broker_rejected',
@@ -1286,6 +1412,7 @@ class IQOptionBridge {
                 matchedOrder.brokerMessage = `Recusada: ${errorMsg}`;
                 matchedOrder.profit = 0;
                 this.adjustBalance(matchedOrder.accountType, matchedOrder.amount);
+                this.notifyTelegramOrderResult(matchedOrder);
                 saveOrdersToDisk(this.ordersStore);
                 this.broadcast({
                   type: 'broker_rejected',
@@ -1811,6 +1938,7 @@ class IQOptionBridge {
         status: this.getStatusPayload(),
       },
     });
+    this.notifyTelegramOrderEntry(order);
 
     return order;
   }
@@ -1970,6 +2098,7 @@ class IQOptionBridge {
         : isEqual
         ? 'EMPATE na IQ Option (R$ 0,00)'
         : `LOSS confirmado pela IQ Option (-R$ ${Math.abs(netProfit).toFixed(2)})`;
+      this.notifyTelegramOrderResult(order);
 
       // Refresh real balances from IQ Option
       this.sendToIQ(
@@ -2140,6 +2269,7 @@ class IQOptionBridge {
       order.closePrice = closePrice;
       order.status = isEqual ? 'EQUAL' : isWin ? 'WIN' : 'LOSS';
       order.profit = netProfit;
+      this.notifyTelegramOrderResult(order);
 
       this.botState.riskState.sessionProfit = Number(
         (this.botState.riskState.sessionProfit + netProfit).toFixed(2)
@@ -2677,6 +2807,41 @@ async function startServer() {
       success: true,
       orders: iqBridge.ordersStore,
     });
+  });
+
+  app.get('/api/iq/telegram', (_req, res) => {
+    res.json({ success: true, settings: iqBridge.getTelegramSettings() });
+  });
+
+  app.post('/api/iq/telegram', (req, res) => {
+    const patch = req.body || {};
+    const validationMessage = iqBridge.validateTelegramSettings(patch);
+    if (validationMessage) {
+      res.status(400).json({
+        success: false,
+        message: validationMessage,
+        settings: iqBridge.getTelegramSettings(),
+      });
+      return;
+    }
+    const settings = iqBridge.updateTelegramSettings(patch);
+    res.json({ success: true, settings });
+  });
+
+  app.post('/api/iq/telegram/test', async (req, res) => {
+    const patch = req.body || {};
+    const validationMessage = iqBridge.validateTelegramSettings(patch, true);
+    if (validationMessage) {
+      res.status(400).json({
+        success: false,
+        message: validationMessage,
+        settings: iqBridge.getTelegramSettings(),
+      });
+      return;
+    }
+    const settings = iqBridge.updateTelegramSettings(patch);
+    const result = await iqBridge.testTelegram();
+    res.status(result.success ? 200 : 400).json({ ...result, settings });
   });
 
   app.delete('/api/iq/orders', (_req, res) => {

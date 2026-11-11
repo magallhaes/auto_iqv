@@ -27,6 +27,7 @@ import { CandlestickChart } from './components/CandlestickChart';
 import { CatalogPage } from './components/CatalogPage';
 import { RiskManagementPage } from './components/RiskManagementPage';
 import { NewsFilterPage } from './components/NewsFilterPage';
+import { NotificationsPage } from './components/NotificationsPage';
 import { SignalListPage } from './components/SignalListPage';
 import { ConnectModal } from './components/ConnectModal';
 import { DailyPerformanceDashboard } from './components/DailyPerformanceDashboard';
@@ -61,10 +62,11 @@ import {
   TrendingDown,
   ChevronDown,
   ChevronUp,
+  Send,
 } from 'lucide-react';
 import { playTradingAudio } from './utils/sound';
 
-type ActiveTab = 'TERMINAL' | 'CATALOG' | 'SIGNALS' | 'RISK' | 'NEWS' | 'PERFORMANCE';
+type ActiveTab = 'TERMINAL' | 'CATALOG' | 'SIGNALS' | 'RISK' | 'NEWS' | 'PERFORMANCE' | 'NOTIFICATIONS';
 
 const INITIAL_NEWS: EconomicNewsEvent[] = [
   {
@@ -1232,6 +1234,21 @@ export default function App() {
           >
             Notícias
           </a>
+          <a
+            href="#notificacoes"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveTab('NOTIFICATIONS');
+            }}
+            className={`flex items-center gap-1.5 border-b-2 py-1 transition-all duration-200 ease-out hover:-translate-y-0.5 active:scale-95 whitespace-nowrap shrink-0 ${
+              activeTab === 'NOTIFICATIONS'
+                ? 'text-white border-sky-500 font-semibold'
+                : 'border-transparent hover:text-white'
+            }`}
+          >
+            <Send className="h-3.5 w-3.5" />
+            Notificações
+          </a>
         </nav>
 
         {/* Zone 3: IQ Connect & User Session Actions */}
@@ -1502,6 +1519,8 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {activeTab === 'NOTIFICATIONS' && <NotificationsPage />}
 
         {activeTab === 'CATALOG' && (
           <CatalogPage
@@ -2889,7 +2908,7 @@ export default function App() {
 
       {/* Mobile Sticky Bottom Navigation Dock (md:hidden) */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0B0F17]/95 backdrop-blur-xl border-t border-slate-800 px-3 py-2 safe-area-pb">
-        <div className="grid grid-cols-5 gap-1 text-center">
+        <div className="grid grid-cols-6 gap-1 text-center">
           <button
             onClick={() => setActiveTab('TERMINAL')}
             className={`flex flex-col items-center justify-center py-1 rounded transition-colors ${
@@ -2934,6 +2953,15 @@ export default function App() {
           >
             <FileText className="w-4 h-4 mb-1" />
             <span className="text-[10px]">Relatório</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('NOTIFICATIONS')}
+            className={`flex flex-col items-center justify-center py-1 rounded transition-colors ${
+              activeTab === 'NOTIFICATIONS' ? 'text-sky-400 font-bold' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Send className="w-4 h-4 mb-1" />
+            <span className="text-[10px]">Avisos</span>
           </button>
         </div>
       </div>
