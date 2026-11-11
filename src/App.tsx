@@ -573,8 +573,50 @@ export default function App() {
         const cList = candlesByAsset[asset.id] || [];
         return catalogPairCandles(asset, cList, strategyConfig);
       })
-      .sort((a, b) => b.winRateGale1 - a.winRateGale1);
+      .sort(
+        (a, b) =>
+          b.winRateGale1 - a.winRateGale1 ||
+          b.asset.payout - a.asset.payout ||
+          b.validSignalsCount - a.validSignalsCount
+      );
   }, [assets, candlesByAsset, strategyConfig]);
+
+  const autoSelectedBotAssetIds = useMemo(() => {
+    const availablePairs = catalogStats.filter(
+      (item) => item.asset.isOpen && item.validSignalsCount > 0
+    );
+    if (availablePairs.length === 0) return [];
+
+    const minimumWinRate = strategyConfig.minCatalogWinRate || 85;
+    const qualifyingPairs = availablePairs.filter(
+      (item) => item.winRateGale1 >= minimumWinRate
+    );
+    const rankedPairs = [...(qualifyingPairs.length > 0 ? qualifyingPairs : availablePairs)].sort(
+      (a, b) =>
+        b.winRateGale1 - a.winRateGale1 ||
+        b.asset.payout - a.asset.payout ||
+        b.validSignalsCount - a.validSignalsCount
+    );
+
+    return rankedPairs.slice(0, 3).map((item) => item.asset.id);
+  }, [catalogStats, strategyConfig.minCatalogWinRate]);
+
+  useEffect(() => {
+    if (!strategyConfig.autoSyncTopCatalogPairs || autoSelectedBotAssetIds.length === 0) return;
+    if (
+      selectedBotAssetIds.length === autoSelectedBotAssetIds.length &&
+      selectedBotAssetIds.every((id, index) => id === autoSelectedBotAssetIds[index])
+    ) {
+      return;
+    }
+
+    setSelectedBotAssetIds(autoSelectedBotAssetIds);
+    fetch('/api/iq/bot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedBotAssetIds: autoSelectedBotAssetIds }),
+    }).catch(() => {});
+  }, [autoSelectedBotAssetIds, selectedBotAssetIds, strategyConfig.autoSyncTopCatalogPairs]);
 
   const activeAsset: IQAsset = useMemo(() => {
     return (
@@ -997,7 +1039,7 @@ export default function App() {
 
   const handleSetSelectedBotAssetIds = (ids: number[]) => {
     setSelectedBotAssetIds(ids);
-    fetch('/api/bot/state', {
+    fetch('/api/iq/bot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ selectedBotAssetIds: ids }),
@@ -1010,7 +1052,7 @@ export default function App() {
       ? selectedBotAssetIds.filter((id) => id !== assetId)
       : [...selectedBotAssetIds, assetId];
     setSelectedBotAssetIds(nextIds);
-    fetch('/api/bot/state', {
+    fetch('/api/iq/bot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ selectedBotAssetIds: nextIds }),
@@ -1584,6 +1626,34 @@ export default function App() {
 
               {/* Quick Pair Chips & Expand Button */}
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={strategyConfig.autoSyncTopCatalogPairs}
+                  aria-label="Seleção automática dos três melhores pares por win-rate e payout"
+                  onClick={() =>
+                    setStrategyConfig((prev) => ({
+                      ...prev,
+                      autoSyncTopCatalogPairs: !prev.autoSyncTopCatalogPairs,
+                    }))
+                  }
+                  className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-slate-700 bg-[#0B0F17] text-xs font-medium text-slate-300 whitespace-nowrap shrink-0 cursor-pointer hover:border-slate-500"
+                  title="Prioriza até 3 pares ativos pelo win-rate de Gale 1 e, em empate, pelo payout"
+                >
+                  <span>Auto pares</span>
+                  <span
+                    className={`relative w-7 h-4 rounded-full transition-colors ${
+                      strategyConfig.autoSyncTopCatalogPairs ? 'bg-emerald-600' : 'bg-slate-600'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                        strategyConfig.autoSyncTopCatalogPairs ? 'translate-x-3.5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </span>
+                </button>
+
                 {catalogStats.slice(0, 5).map((item) => (
                   <button
                     key={item.asset.id}
@@ -1596,7 +1666,7 @@ export default function App() {
                   >
                     <span>{item.asset.ticker.replace(' (OTC)', '')}</span>
                     <span className="ml-1 text-[10px] text-emerald-400 font-mono">
-                      {item.winRateGale1.toFixed(0)}%
+                      {item.winRateGale1.toFixed(0)}% · {item.asset.payout}%
                     </span>
                   </button>
                 ))}
