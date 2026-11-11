@@ -29,6 +29,8 @@ import { RiskManagementPage } from './components/RiskManagementPage';
 import { NewsFilterPage } from './components/NewsFilterPage';
 import { SignalListPage } from './components/SignalListPage';
 import { ConnectModal } from './components/ConnectModal';
+import { DailyPerformanceDashboard } from './components/DailyPerformanceDashboard';
+import { LoginScreen } from './components/LoginScreen';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -52,10 +54,12 @@ import {
   VolumeX,
   XCircle,
   Zap,
+  LogOut,
+  User,
 } from 'lucide-react';
 import { playTradingAudio } from './utils/sound';
 
-type ActiveTab = 'TERMINAL' | 'CATALOG' | 'SIGNALS' | 'RISK' | 'NEWS';
+type ActiveTab = 'TERMINAL' | 'CATALOG' | 'SIGNALS' | 'RISK' | 'NEWS' | 'PERFORMANCE';
 
 const INITIAL_NEWS: EconomicNewsEvent[] = [
   {
@@ -160,6 +164,22 @@ function formatOrderPrice(price: number | undefined, ticker?: string): string {
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('TERMINAL');
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+
+  // System Access Authentication Gate (Tela de Login)
+  const [currentUser, setCurrentUser] = useState<{ email: string; name: string } | null>(() => {
+    try {
+      const stored = localStorage.getItem('quantiq_user_session');
+      if (stored) return JSON.parse(stored);
+    } catch {
+      // ignore
+    }
+    return null;
+  });
+
+  const handleLogout = () => {
+    localStorage.removeItem('quantiq_user_session');
+    setCurrentUser(null);
+  };
 
   // Connection & Account Status
   const [connectionStatus, setConnectionStatus] = useState<IQConnectionStatus>({
@@ -984,6 +1004,16 @@ export default function App() {
       ? connectionStatus.realBalance
       : connectionStatus.practiceBalance;
 
+  // Tela de Login Obrigatória: Só acessa o sistema após o login
+  if (!currentUser) {
+    return (
+      <LoginScreen
+        onLoginSuccess={(user) => setCurrentUser(user)}
+        savedEmail={connectionStatus.email}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#0B0F17] text-slate-100 flex flex-col">
       {/* Top Bar Contract: Strictly 3 Zones separated by gap-8 */}
@@ -1000,7 +1030,7 @@ export default function App() {
           QuantIQ
         </a>
 
-        {/* Zone 2: 4 concise single-line navigation links */}
+        {/* Zone 2: Concise single-line navigation links */}
         <nav className="flex items-center gap-6 text-sm font-medium text-slate-400 overflow-x-auto">
           <a
             href="#terminal"
@@ -1064,6 +1094,21 @@ export default function App() {
             Stop Win / Loss & Entradas
           </a>
           <a
+            href="#performance"
+            onClick={(e) => {
+              e.preventDefault();
+              setActiveTab('PERFORMANCE');
+            }}
+            className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 flex items-center gap-1.5 ${
+              activeTab === 'PERFORMANCE'
+                ? 'text-white border-emerald-500 font-bold'
+                : 'border-transparent hover:text-white'
+            }`}
+          >
+            <BarChart3 className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Relatório Diário</span>
+          </a>
+          <a
             href="#noticias"
             onClick={(e) => {
               e.preventDefault();
@@ -1079,13 +1124,13 @@ export default function App() {
           </a>
         </nav>
 
-        {/* Zone 3: 1 primary action button */}
-        <div className="flex items-center shrink-0">
+        {/* Zone 3: IQ Connect & User Session Actions */}
+        <div className="flex items-center gap-3 shrink-0">
           <button
             onClick={() => setIsConnectModalOpen(true)}
-            className={`px-4 py-2 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
               connectionStatus.authenticated
-                ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-600/30'
                 : 'bg-blue-600 hover:bg-blue-500 text-white'
             }`}
           >
@@ -1093,6 +1138,24 @@ export default function App() {
               ? `IQ Conectada (${connectionStatus.email?.split('@')[0]})`
               : 'Conectar IQ Option'}
           </button>
+
+          {currentUser && (
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-800 text-xs">
+              <div className="flex items-center gap-1.5 bg-[#141A26] px-2.5 py-1 rounded-lg border border-[#212B3E]">
+                <User className="w-3.5 h-3.5 text-slate-400" />
+                <span className="font-semibold text-white truncate max-w-[110px]">
+                  {currentUser.name}
+                </span>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                title="Sair do Sistema"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -1396,6 +1459,18 @@ export default function App() {
               setStrategyConfig((prev) => ({ ...prev, ...patch }))
             }
             onAddCustomNews={(ev) => setNewsEvents((prev) => [...prev, ev])}
+          />
+        )}
+
+        {activeTab === 'PERFORMANCE' && (
+          <DailyPerformanceDashboard
+            orders={orders}
+            riskState={riskState}
+            riskConfig={riskConfig}
+            currentBalance={activeBalanceValue}
+            currencySymbol="R$"
+            onClearHistory={() => setOrders([])}
+            onRefresh={fetchCatalogSnapshot}
           />
         )}
 

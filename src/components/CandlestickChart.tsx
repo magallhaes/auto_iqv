@@ -4,6 +4,7 @@ import {
   calculateBollingerBands,
   calculateEMA,
   getCandleColor,
+  calculateVolatilityIndicator,
 } from '../utils/indicators';
 import {
   Clock,
@@ -15,6 +16,8 @@ import {
   Layers,
   Activity,
   Sliders,
+  AlertTriangle,
+  Info,
 } from 'lucide-react';
 
 interface CandlestickChartProps {
@@ -51,6 +54,12 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     time: string;
     candle: Candle | null;
   } | null>(null);
+
+  const [showVolBanner, setShowVolBanner] = useState(true);
+  const volatility = useMemo(
+    () => calculateVolatilityIndicator(candles, 10, 25),
+    [candles]
+  );
 
   const visibleCandles = useMemo(
     () => candles.slice(-visibleCount),
@@ -302,6 +311,63 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
               Expiração: 00:{String(secondsRemainingInCandle).padStart(2, '0')}
             </span>
           </div>
+
+          {/* Indicador Visual de Alta Volatilidade */}
+          <div className="relative group cursor-pointer" title={volatility.signalMessage}>
+            {volatility.isHighVolatility ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 font-bold text-xs animate-pulse shadow-[0_0_12px_rgba(245,158,11,0.25)]">
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span>ALTA VOLATILIDADE</span>
+                <span className="font-mono text-[11px] bg-amber-500/25 px-1 py-0.2 rounded text-amber-200">
+                  +{volatility.excessPercent}%
+                </span>
+                <span className="text-[10px] text-amber-200/90 hidden lg:inline font-medium">
+                  (Risco Rompimento Falso)
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#141A26] border border-[#212B3E] text-slate-400 text-xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                <span>Volatilidade:</span>
+                <span className="font-semibold text-slate-300 font-mono text-[11px]">
+                  {volatility.excessPercent >= 0 ? `+${volatility.excessPercent}%` : `${volatility.excessPercent}%`}
+                </span>
+              </div>
+            )}
+
+            {/* Hover Tooltip com Métricas Quantitativas */}
+            <div className="absolute top-full left-0 mt-1 hidden group-hover:flex flex-col w-64 p-3 bg-[#111722] border border-[#212E44] rounded-lg shadow-2xl z-50 text-[11px] space-y-1.5 pointer-events-none">
+              <div className="flex items-center justify-between font-bold text-white border-b border-[#212E44] pb-1">
+                <span>Indicador de Volatilidade</span>
+                <span className={volatility.isHighVolatility ? 'text-amber-400' : 'text-emerald-400'}>
+                  {volatility.isHighVolatility ? 'ALTA (ALERTA)' : 'NORMAL'}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span>Desvio Padrão (10 velas):</span>
+                <span className="font-mono font-bold text-white">
+                  {volatility.currentStdDev.toFixed(chartGeometry.decimals)}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-300">
+                <span>Média Móvel de Volatilidade:</span>
+                <span className="font-mono text-slate-400">
+                  {volatility.movingAverageStdDev.toFixed(chartGeometry.decimals)}
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-300 border-t border-[#212E44] pt-1">
+                <span>Excesso vs Média Móvel:</span>
+                <span className={`font-mono font-bold ${volatility.isHighVolatility ? 'text-amber-400' : 'text-slate-300'}`}>
+                  {volatility.excessPercent >= 0 ? `+${volatility.excessPercent}%` : `${volatility.excessPercent}%`} (Gatilho: +20%)
+                </span>
+              </div>
+              {volatility.isHighVolatility && (
+                <div className="text-[10px] text-amber-300/90 bg-amber-500/10 p-1.5 rounded border border-amber-500/20">
+                  ⚠️ Atenção: Mercado esticado. Cuidado com possíveis rompimentos falsos de Suporte/Resistência!
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Right: Real-time Indicator Snapshot */}
@@ -328,6 +394,22 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
 
       {/* SVG Interactive Chart Canvas */}
       <div className="relative w-full overflow-hidden bg-[#0A0D14]">
+        {/* Floating Alta Volatilidade Canvas Banner */}
+        {volatility.isHighVolatility && showVolBanner && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-25 flex items-center gap-2.5 bg-[#1C1608]/95 border border-amber-500/40 text-amber-200 px-3.5 py-1.5 rounded-lg shadow-2xl backdrop-blur-md text-xs font-medium">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 animate-pulse" />
+            <span>
+              <strong className="font-bold text-amber-400">ALTA VOLATILIDADE (+{volatility.excessPercent}%):</strong> Desvio padrão das últimas 10 velas 20% acima da média móvel. Sinal de possíveis rompimentos falsos!
+            </span>
+            <button
+              onClick={() => setShowVolBanner(false)}
+              className="ml-1 text-amber-400/70 hover:text-white p-0.5 transition-colors"
+              title="Dispensar aviso"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
         {/* IQ Option Floating Left Tool Toolbar (Estilo Corretora) */}
         <div className="absolute top-4 left-3 z-20 flex flex-col gap-1.5 pointer-events-auto">
           <div className="bg-[#111622]/90 backdrop-blur-md p-1.5 rounded-md border border-[#1E2738] flex flex-col gap-1 text-[11px] font-bold text-slate-300 shadow-lg">

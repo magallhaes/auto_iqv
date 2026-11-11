@@ -858,6 +858,7 @@ export function catalogAllStrategies(
       });
     }
   }
+  return benchmarks.sort((a, b) => b.winRateGale1 - a.winRateGale1 || b.winRateNoGale - a.winRateNoGale);
 }
 
 export interface VolatilityAnalysis {
