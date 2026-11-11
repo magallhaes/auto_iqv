@@ -237,12 +237,12 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     return isWinning ? sum + (ord.amount * ord.payoutPercent) / 100 : sum - ord.amount;
   }, 0);
 
-  // Mouse move handler for interactive crosshair
-  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+  // Client position handler for interactive crosshair (mouse & mobile touch)
+  const updateCrosshairAtClientPos = (clientXPos: number, clientYPos: number) => {
     if (!svgRef.current || !chartGeometry) return;
     const rect = svgRef.current.getBoundingClientRect();
-    const clientX = e.clientX - rect.left;
-    const clientY = e.clientY - rect.top;
+    const clientX = clientXPos - rect.left;
+    const clientY = clientYPos - rect.top;
 
     const svgX = (clientX / rect.width) * chartGeometry.width;
     const svgY = (clientY / rect.height) * chartGeometry.height;
@@ -272,6 +272,16 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
       time: timeStr,
       candle: c,
     });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    updateCrosshairAtClientPos(e.clientX, e.clientY);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<SVGSVGElement>) => {
+    if (e.touches && e.touches[0]) {
+      updateCrosshairAtClientPos(e.touches[0].clientX, e.touches[0].clientY);
+    }
   };
 
   const handleMouseLeave = () => {
@@ -559,10 +569,13 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
         <svg
           ref={svgRef}
           viewBox={`0 0 ${chartGeometry.width} ${chartGeometry.height}`}
-          className="w-full h-[375px] block select-none cursor-crosshair"
+          className="w-full h-[310px] sm:h-[375px] block select-none cursor-crosshair touch-none"
           preserveAspectRatio="none"
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
+          onTouchStart={handleTouchMove}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleMouseLeave}
         >
           {/* Subtle Watermark in background */}
           <text
