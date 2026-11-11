@@ -991,10 +991,26 @@ export default function App() {
     showToast('Saldo da Conta Treinamento restaurado para R$ 10.000,00');
   };
 
+  const handleSetSelectedBotAssetIds = (ids: number[]) => {
+    setSelectedBotAssetIds(ids);
+    fetch('/api/bot/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedBotAssetIds: ids }),
+    }).catch(() => {});
+    showToast(`Pares ativos no Robô atualizados (${ids.length} selecionados)`);
+  };
+
   const handleToggleBotAsset = (assetId: number) => {
-    setSelectedBotAssetIds((prev) =>
-      prev.includes(assetId) ? prev.filter((id) => id !== assetId) : [...prev, assetId]
-    );
+    const nextIds = selectedBotAssetIds.includes(assetId)
+      ? selectedBotAssetIds.filter((id) => id !== assetId)
+      : [...selectedBotAssetIds, assetId];
+    setSelectedBotAssetIds(nextIds);
+    fetch('/api/bot/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selectedBotAssetIds: nextIds }),
+    }).catch(() => {});
   };
 
   const handleApplyStrategyAndPair = (
@@ -1423,6 +1439,7 @@ export default function App() {
             }
             selectedBotAssetIds={selectedBotAssetIds}
             onToggleBotAsset={handleToggleBotAsset}
+            onSetSelectedBotAssetIds={handleSetSelectedBotAssetIds}
             onSelectPairForTerminal={(asset) => {
               setSelectedAssetId(asset.id);
               setActiveTab('TERMINAL');
@@ -1630,7 +1647,7 @@ export default function App() {
                           const normalIds = catalogStats
                             .filter((s) => !s.asset.isOtc)
                             .map((s) => s.asset.id);
-                          setSelectedBotAssetIds(normalIds);
+                          handleSetSelectedBotAssetIds(normalIds);
                           showToast('Todos os 15 pares do Mercado Normal ativados no Robô!');
                         }}
                         className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/60 text-emerald-300 rounded text-[11px] font-semibold cursor-pointer"
@@ -1696,7 +1713,7 @@ export default function App() {
                           const otcIds = catalogStats
                             .filter((s) => s.asset.isOtc)
                             .map((s) => s.asset.id);
-                          setSelectedBotAssetIds(otcIds);
+                          handleSetSelectedBotAssetIds(otcIds);
                           showToast('Todos os 15 pares do Mercado OTC ativados no Robô!');
                         }}
                         className="px-2.5 py-1 bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/60 text-amber-300 rounded text-[11px] font-semibold cursor-pointer"

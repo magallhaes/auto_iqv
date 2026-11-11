@@ -19,7 +19,9 @@ import {
   Play,
   RefreshCw,
   Search,
+  ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   Trophy,
   Zap,
 } from 'lucide-react';
@@ -32,6 +34,7 @@ interface CatalogPageProps {
   onUpdateConfig: (patch: Partial<StrategyConfig>) => void;
   selectedBotAssetIds: number[];
   onToggleBotAsset: (assetId: number) => void;
+  onSetSelectedBotAssetIds?: (ids: number[]) => void;
   onSelectPairForTerminal: (asset: IQAsset) => void;
   onApplyStrategyAndPair: (
     preset: {
@@ -56,6 +59,7 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
   onUpdateConfig,
   selectedBotAssetIds,
   onToggleBotAsset,
+  onSetSelectedBotAssetIds,
   onSelectPairForTerminal,
   onApplyStrategyAndPair,
   onRefreshCatalog,
@@ -156,15 +160,42 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
     };
   }, [filteredAndSorted]);
 
+  const handleSelectTop3 = () => {
+    const top3 = filteredAndSorted.slice(0, 3).map((s) => s.asset.id);
+    if (onSetSelectedBotAssetIds) {
+      onSetSelectedBotAssetIds(top3);
+    } else {
+      top3.forEach((id) => {
+        if (!selectedBotAssetIds.includes(id)) onToggleBotAsset(id);
+      });
+    }
+  };
+
+  const handleSelectTop1 = () => {
+    if (filteredAndSorted.length === 0) return;
+    const top1 = [filteredAndSorted[0].asset.id];
+    if (onSetSelectedBotAssetIds) {
+      onSetSelectedBotAssetIds(top1);
+    } else {
+      top1.forEach((id) => {
+        if (!selectedBotAssetIds.includes(id)) onToggleBotAsset(id);
+      });
+    }
+  };
+
   const handleSelectAllAboveThreshold = () => {
-    const qualifying = filteredAndSorted.filter(
-      (s) => s.winRateGale1 >= config.minCatalogWinRate
-    );
-    qualifying.forEach((s) => {
-      if (!selectedBotAssetIds.includes(s.asset.id)) {
-        onToggleBotAsset(s.asset.id);
-      }
-    });
+    const qualifying = filteredAndSorted
+      .filter((s) => s.winRateGale1 >= (config.minCatalogWinRate || 85))
+      .map((s) => s.asset.id);
+    if (onSetSelectedBotAssetIds && qualifying.length > 0) {
+      onSetSelectedBotAssetIds(qualifying);
+    } else {
+      qualifying.forEach((id) => {
+        if (!selectedBotAssetIds.includes(id)) {
+          onToggleBotAsset(id);
+        }
+      });
+    }
   };
 
   return (
@@ -666,6 +697,50 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
               <div className="mt-1 text-[11px] text-slate-500">
                 Pares ativos no Robô: {selectedBotAssetIds.length} selecionados
               </div>
+            </div>
+          </div>
+
+          {/* Informative Security & Smart Selection Card */}
+          <div className="bg-[#111827] border border-blue-500/30 rounded-lg p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-start gap-2.5">
+              <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-white block">
+                  Proteção Anti-Sobreposição & Escolha Automática do Melhor Par
+                </span>
+                <p className="text-slate-400 text-[11px] mt-0.5 leading-relaxed">
+                  <strong>Não opera sinal em cima de outro:</strong> O robô bloqueia novas entradas enquanto houver operação em andamento ou Martingale aberto. Se múltiplos pares derem sinal no mesmo minuto, ele analisa o ranking e opera <strong>apenas no melhor par</strong>.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleSelectTop1}
+                className="px-2.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-semibold text-[11px] transition-all cursor-pointer active:scale-95 flex items-center gap-1 shadow-sm"
+                title="Seleciona apenas o melhor par absoluto no robô"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                Auto Top 1 (Campeão)
+              </button>
+              <button
+                type="button"
+                onClick={handleSelectTop3}
+                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] transition-all cursor-pointer active:scale-95 flex items-center gap-1 shadow-sm"
+                title="Seleciona automaticamente os 3 melhores pares no robô"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-white" />
+                Auto Top 3 Pares
+              </button>
+              <button
+                type="button"
+                onClick={handleSelectAllAboveThreshold}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-[11px] border border-slate-700 transition-all cursor-pointer active:scale-95"
+                title="Seleciona todos os pares com assertividade Gale 1 ≥ 85%"
+              >
+                Todos ≥ 85%
+              </button>
             </div>
           </div>
 

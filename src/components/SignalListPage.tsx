@@ -123,7 +123,11 @@ export function SignalListPage({
   const totalWins = win1stCount + winG1Count + winG2Count;
   const lossCount = signals.filter((s) => s.status === 'LOSS').length;
   const blockedCount = signals.filter(
-    (s) => s.status === 'BLOCKED_TREND' || s.status === 'BLOCKED_NEWS' || s.status === 'BLOCKED_PAYOUT'
+    (s) =>
+      s.status === 'BLOCKED_TREND' ||
+      s.status === 'BLOCKED_NEWS' ||
+      s.status === 'BLOCKED_PAYOUT' ||
+      s.status === 'BLOCKED_SIMULTANEOUS'
   ).length;
   const completedCount = totalWins + lossCount;
   const winRate = completedCount > 0 ? (totalWins / completedCount) * 100 : 0;
@@ -629,6 +633,13 @@ export function SignalListPage({
                           ) : sig.status === 'LOSS' ? (
                             <span className="text-[10px] uppercase font-bold text-red-300 bg-red-950/70 border border-red-700/80 px-2 py-0.5 rounded">
                               LOSS Total
+                            </span>
+                          ) : sig.status === 'BLOCKED_SIMULTANEOUS' ? (
+                            <span
+                              className="text-[10px] uppercase font-bold text-amber-300 bg-amber-950/60 border border-amber-700/60 px-2 py-0.5 rounded"
+                              title="Sinal bloqueado pela proteção anti-sobreposição (já operando ou sinal simultâneo)"
+                            >
+                              Anti-Sobreposição
                             </span>
                           ) : (
                             <span className="text-[10px] uppercase font-bold text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded">

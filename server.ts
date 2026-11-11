@@ -57,6 +57,7 @@ interface ServerScheduledSignal {
     | 'BLOCKED_TREND'
     | 'BLOCKED_NEWS'
     | 'BLOCKED_PAYOUT'
+    | 'BLOCKED_SIMULTANEOUS'
     | 'SKIPPED';
   galeStep?: 0 | 1 | 2;
   profit?: number;
@@ -2091,6 +2092,60 @@ class IQOptionBridge {
     return emaArray;
   }
 
+  private computeAssetScore(assetId: number, tf: number): number {
+    const asset = DEFAULT_ASSETS.find((a) => a.id === assetId);
+    const candles = candleStore.get(getStoreKey(assetId, tf)) || [];
+    if (candles.length < 15) return (asset?.payout || 80);
+
+    const quadrantSeconds = tf * 5;
+    const mode = this.botState.strategyConfig.mhiMode || 'MINORIA';
+    let wins = 0;
+    let total = 0;
+
+    const quadrants: Map<number, Candle[]> = new Map();
+    for (const c of candles) {
+      const qStart = Math.floor(c.from / quadrantSeconds) * quadrantSeconds;
+      const list = quadrants.get(qStart) || [];
+      list.push(c);
+      quadrants.set(qStart, list);
+    }
+
+    quadrants.forEach((qCandles) => {
+      if (qCandles.length < 5) return;
+      const base = qCandles.slice(0, 3);
+      const greens = base.filter((c) => c.close > c.open).length;
+      const reds = base.filter((c) => c.close < c.open).length;
+      if (greens === reds) return;
+
+      const minorityGreen = greens < reds;
+      const targetColor =
+        mode === 'MINORIA' ? (minorityGreen ? 'GREEN' : 'RED') : minorityGreen ? 'RED' : 'GREEN';
+      const entryCandle = qCandles[3];
+      if (!entryCandle) return;
+      total++;
+      const isWin1 =
+        targetColor === 'GREEN'
+          ? entryCandle.close > entryCandle.open
+          : entryCandle.close < entryCandle.open;
+      if (isWin1) {
+        wins++;
+      } else {
+        const gale1Candle = qCandles[4];
+        if (gale1Candle) {
+          const isWinG1 =
+            targetColor === 'GREEN'
+              ? gale1Candle.close > gale1Candle.open
+              : gale1Candle.close < gale1Candle.open;
+          if (isWinG1) wins += 0.8;
+        }
+      }
+    });
+
+    const winRate = total > 0 ? (wins / total) * 100 : 50;
+    const payoutBonus = (asset?.payout || 80) * 0.15;
+    return winRate + payoutBonus;
+  }
+
   public runBackgroundBot(nowSec: number) {
     if (!this.botState.isRunning) return;
     if (this.botState.riskState.stopWinReached || this.botState.riskState.stopLossReached) return;
@@ -2164,8 +2219,27 @@ class IQOptionBridge {
           if (order) {
             sig.orderId = order.id;
           }
+
+          // Anti-sobreposição: Bloqueia sinais simultâneos no mesmo horário para não operar um em cima do outro
+          for (const otherSig of this.botState.scheduledSignals) {
+            if (otherSig.id !== sig.id && (otherSig.status === 'PENDING' || otherSig.status === 'PRE_SIGNAL')) {
+              const otherAdvance =
+                this.botState.signalListConfig.entryAdvanceSeconds === 0
+                  ? 0
+                  : 60 - this.botState.signalListConfig.entryAdvanceSeconds;
+              const otherTrigger = otherSig.targetTimestamp - otherAdvance;
+              if (Math.abs(otherTrigger - triggerTime) <= 2) {
+                otherSig.status = 'BLOCKED_SIMULTANEOUS';
+                console.log(
+                  `[Bot Lista] Anti-sobreposição: ${otherSig.ticker} ${otherSig.timeStr} bloqueado pois ${sig.ticker} já está sendo operado neste minuto.`
+                );
+              }
+            }
+          }
+
           saveBotStateToDisk(this.botState);
           this.broadcast({ type: 'bot_state', payload: this.botState });
+          break; // Trava estrita: executa apenas 1 sinal por segundo/candlestick
         }
       }
     }
@@ -2201,7 +2275,15 @@ class IQOptionBridge {
           this.lastServerMhiTrigger !== targetCandleStart
         ) {
           this.lastServerMhiTrigger = targetCandleStart;
-          for (const assetId of this.botState.selectedBotAssetIds) {
+
+          // Seleção Inteligente do Melhor Par: Ordena os pares ativos pela taxa de assertividade e payout
+          const candidateAssetIds = [...this.botState.selectedBotAssetIds].sort((aId, bId) => {
+            const scoreA = this.computeAssetScore(aId, tf);
+            const scoreB = this.computeAssetScore(bId, tf);
+            return scoreB - scoreA;
+          });
+
+          for (const assetId of candidateAssetIds) {
             const asset = DEFAULT_ASSETS.find((a) => a.id === assetId);
             if (!asset) continue;
             const candles = candleStore.get(getStoreKey(assetId, tf)) || [];
@@ -2243,6 +2325,10 @@ class IQOptionBridge {
                 }
               }
 
+              console.log(
+                `[MHI Bot] Selecionado o melhor par ${asset.ticker} (Score de Assertividade: ${this.computeAssetScore(assetId, tf).toFixed(1)}%) para entrada ${direction}`
+              );
+
               this.executeOrder({
                 assetId,
                 ticker: asset.ticker,
@@ -2254,7 +2340,7 @@ class IQOptionBridge {
                 galeStep: 0,
                 strategyLabel: `${this.botState.strategyConfig.mhiVariant} ${this.botState.strategyConfig.mhiMode}`,
               });
-              break;
+              break; // Trava estrita: opera exclusivamente 1 melhor par por quadrante
             }
           }
         }

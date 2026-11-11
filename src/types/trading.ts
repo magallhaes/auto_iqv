@@ -264,6 +264,7 @@ export interface ScheduledSignal {
     | 'BLOCKED_TREND'
     | 'BLOCKED_NEWS'
     | 'BLOCKED_PAYOUT'
+    | 'BLOCKED_SIMULTANEOUS'
     | 'SKIPPED';
   galeStep?: 0 | 1 | 2;
   profit?: number;
