@@ -489,6 +489,20 @@ export default function App() {
             if (msg.payload.serverTimestamp) {
               setServerNowSec(msg.payload.serverTimestamp);
             }
+          } else if (msg.type === 'catalog_assets' && Array.isArray(msg.payload?.assets)) {
+            setAssets(msg.payload.assets);
+          } else if (
+            msg.type === 'catalog_candles' &&
+            Array.isArray(msg.payload?.assetIds) &&
+            Array.isArray(msg.payload?.candles)
+          ) {
+            setCandlesByAsset((prev) => {
+              const next = { ...prev };
+              for (const assetId of msg.payload.assetIds as number[]) {
+                next[assetId] = msg.payload.candles;
+              }
+              return next;
+            });
           } else if (msg.type === 'candles_batch_tick' && msg.payload) {
             const { batch60, batch300, serverTimestamp } = msg.payload;
             if (serverTimestamp) setServerNowSec(serverTimestamp);
@@ -1675,12 +1689,12 @@ export default function App() {
                   onClick={() => setShowAllPairsDrawer((prev) => !prev)}
                   className="px-2.5 py-1 bg-[#0B0F17] hover:bg-slate-800 border border-slate-700 rounded-md text-xs font-semibold text-blue-400 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
                 >
-                  {showAllPairsDrawer ? 'Ocultar Pares' : '+ Mais Pares (30)'}
+                  {showAllPairsDrawer ? 'Ocultar Pares' : `+ Mais Pares (${assets.length})`}
                 </button>
               </div>
             </div>
 
-              {/* Expandable Full Grid: Mercado Normal (15 Pares) vs Mercado OTC (15 Pares) */}
+              {/* Expandable grid of broker-enabled normal and OTC currency pairs */}
               {showAllPairsDrawer && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-3 border-t border-slate-800">
                   {/* Left: Mercado Normal (Forex Aberto) */}
@@ -1688,7 +1702,7 @@ export default function App() {
                     <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-slate-800">
                       <div>
                         <h3 className="text-xs font-display font-bold text-emerald-400">
-                          MERCADO NORMAL (FOREX ABERTO — 15 PARES)
+                          MERCADO NORMAL (FOREX ABERTO — {assets.filter((asset) => !asset.isOtc).length} PARES)
                         </h3>
                         <p className="text-[11px] text-slate-400">
                           Pares oficiais com liquidez interbancária direta
@@ -1700,7 +1714,7 @@ export default function App() {
                             .filter((s) => !s.asset.isOtc)
                             .map((s) => s.asset.id);
                           handleSetSelectedBotAssetIds(normalIds);
-                          showToast('Todos os 15 pares do Mercado Normal ativados no Robô!');
+                          showToast(`Todos os ${normalIds.length} pares do Mercado Normal ativados no Robô!`);
                         }}
                         className="px-2.5 py-1 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/60 text-emerald-300 rounded text-[11px] font-semibold cursor-pointer"
                       >
@@ -1754,7 +1768,7 @@ export default function App() {
                     <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-slate-800">
                       <div>
                         <h3 className="text-xs font-display font-bold text-amber-400">
-                          MERCADO OTC (OVER-THE-COUNTER 24/7 — 15 PARES)
+                          MERCADO OTC (OVER-THE-COUNTER — {assets.filter((asset) => asset.isOtc).length} PARES)
                         </h3>
                         <p className="text-[11px] text-slate-400">
                           Pares OTC da corretora (Payouts de 89% a 93%)
@@ -1766,7 +1780,7 @@ export default function App() {
                             .filter((s) => s.asset.isOtc)
                             .map((s) => s.asset.id);
                           handleSetSelectedBotAssetIds(otcIds);
-                          showToast('Todos os 15 pares do Mercado OTC ativados no Robô!');
+                          showToast(`Todos os ${otcIds.length} pares OTC ativados no Robô!`);
                         }}
                         className="px-2.5 py-1 bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/60 text-amber-300 rounded text-[11px] font-semibold cursor-pointer"
                       >

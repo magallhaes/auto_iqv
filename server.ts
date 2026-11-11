@@ -294,6 +294,29 @@ const DEFAULT_ASSETS: IQAsset[] = [
   { id: 90, ticker: 'USD/MXN (OTC)', name: 'USD/MXN (OTC)', isOtc: true, payout: 92, isOpen: true, category: 'digital' },
 ];
 
+const CURRENCY_CODES = new Set([
+  'AED', 'ARS', 'AUD', 'BHD', 'BRL', 'CAD', 'CHF', 'CLP', 'CNY', 'COP', 'CZK',
+  'DKK', 'EGP', 'EUR', 'GBP', 'HKD', 'HUF', 'IDR', 'ILS', 'INR', 'JPY', 'KRW',
+  'KWD', 'MAD', 'MXN', 'MYR', 'NOK', 'NZD', 'OMR', 'PHP', 'PLN', 'QAR', 'RON',
+  'RUB', 'SAR', 'SEK', 'SGD', 'THB', 'TRY', 'TWD', 'UAH', 'USD', 'VND', 'ZAR',
+]);
+
+function parseCurrencyPair(value: string, otcHint = false) {
+  const cleaned = value.toUpperCase().replace(/^FRONT\./, '');
+  const match = cleaned.match(/(?:^|[^A-Z])([A-Z]{3})\s*\/?\s*([A-Z]{3})(?:[^A-Z]|$)/);
+  if (!match || !CURRENCY_CODES.has(match[1]) || !CURRENCY_CODES.has(match[2])) return null;
+
+  return {
+    base: match[1],
+    quote: match[2],
+    isOtc: otcHint || /OTC/i.test(cleaned),
+  };
+}
+
+function currencyPairKey(base: string, quote: string, isOtc: boolean) {
+  return `${base}${quote}${isOtc ? 'OTC' : ''}`;
+}
+
 const BASE_PRICES: Record<number, number> = {
   1: 1.1151,
   2: 1.2915,
@@ -516,6 +539,7 @@ class IQOptionBridge {
   private browserClients = new Set<WebSocket>();
   public activeIdMap = new Map<string, number>();
   public activePayoutMap = new Map<number, number>();
+  public catalogAssets: IQAsset[] = DEFAULT_ASSETS;
   public pendingOrdersByReqId = new Map<string, string>();
   private subscribedAssets = new Set<number>([
     1, 2, 3, 4, 5, 76, 77, 81, 1861, 1862, 1864, 1865, 1866, 1867, 1870, 1878, 1879, 2298, 2300
@@ -1112,6 +1136,56 @@ class IQOptionBridge {
                   }
                 }
               }
+
+              const discoveredAssets = new Map<string, IQAsset>();
+              for (const [idStr, active] of Object.entries(binaryActives)) {
+                const activeId = Number(idStr);
+                if (!activeId || !active?.enabled || active.is_suspended) continue;
+
+                const rawTicker = String(active.ticker || '');
+                const rawName = String(active.name || '').replace(/^front\./i, '');
+                const rawDescription = String(active.description || '').replace(/^front\./i, '');
+                const otcHint = Boolean(active.is_otc) || /OTC/i.test(`${rawTicker} ${rawName} ${rawDescription}`);
+                const pair = [rawTicker, rawName, rawDescription]
+                  .map((value) => parseCurrencyPair(value, otcHint))
+                  .find((value) => value !== null);
+                if (!pair) continue;
+
+                const pairKey = currencyPairKey(pair.base, pair.quote, pair.isOtc);
+                const knownAsset = DEFAULT_ASSETS.find((asset) => {
+                  const knownPair = parseCurrencyPair(asset.ticker, asset.isOtc);
+                  return knownPair && currencyPairKey(knownPair.base, knownPair.quote, knownPair.isOtc) === pairKey;
+                });
+                const ticker = knownAsset?.ticker || `${pair.base}/${pair.quote}${pair.isOtc ? ' (OTC)' : ''}`;
+                const payout = this.activePayoutMap.get(activeId) || knownAsset?.payout || 88;
+                const asset: IQAsset = {
+                  id: knownAsset?.id ?? activeId,
+                  ticker,
+                  name: ticker,
+                  isOtc: pair.isOtc,
+                  payout,
+                  isOpen: true,
+                  category: knownAsset?.category || 'binary',
+                };
+                const existing = discoveredAssets.get(pairKey);
+                if (!existing || asset.payout > existing.payout) {
+                  discoveredAssets.set(pairKey, asset);
+                }
+
+                this.activeIdMap.set(ticker, activeId);
+                this.activeIdMap.set(ticker.toUpperCase().replace(/[^A-Z0-9]/g, ''), activeId);
+                this.requestCandlesForActive(activeId, 60, 180);
+              }
+
+              if (Object.keys(binaryActives).length > 0) {
+                this.catalogAssets = [...discoveredAssets.values()].sort((a, b) =>
+                  a.ticker.localeCompare(b.ticker)
+                );
+                this.broadcast({
+                  type: 'catalog_assets',
+                  payload: { assets: this.catalogAssets },
+                });
+              }
             } else if (msg.name === 'option-opened' && msg.msg) {
               const m = msg.msg as Record<string, any>;
               const optionId = m.option_id || m.id;
@@ -1283,6 +1357,10 @@ class IQOptionBridge {
                       },
                     });
                   }
+                  this.broadcast({
+                    type: 'catalog_candles',
+                    payload: { assetIds: targetIds, timeframe: tf, candles: parsed },
+                  });
                 }
               }
             } else if (msg.name === 'quote-generated' && msg.msg) {
@@ -1529,6 +1607,26 @@ class IQOptionBridge {
       },
       `candles_${activeId}_${timeframe}`
     );
+  }
+
+  public getCatalogCandles(asset: IQAsset, timeframe: number, count: number): Candle[] {
+    const resolved = this.resolveActive(asset.id, asset.ticker);
+    const liveBrokerSession = this.authenticated && !this.ssid.startsWith('sim_session_');
+    if (liveBrokerSession) {
+      this.requestCandlesForActive(resolved.activeId, timeframe, count);
+    }
+
+    const assetIds = [resolved.activeId, asset.id];
+    const hasRealFeed = assetIds.some((id) =>
+      this.hasRealCandleFeed.has(getStoreKey(id, timeframe))
+    );
+    if (liveBrokerSession && !hasRealFeed) return [];
+
+    const candles = assetIds
+      .map((id) => candleStore.get(getStoreKey(id, timeframe)))
+      .find((list) => list && list.length > 0) ||
+      ensureInitialCandles(resolved.activeId, timeframe, count);
+    return candles.slice(-count);
   }
 
   private tickMarketStream() {
@@ -2128,7 +2226,7 @@ class IQOptionBridge {
   }
 
   private computeAssetScore(assetId: number, tf: number): number {
-    const asset = DEFAULT_ASSETS.find((a) => a.id === assetId);
+    const asset = this.catalogAssets.find((a) => a.id === assetId);
     const candles = candleStore.get(getStoreKey(assetId, tf)) || [];
     if (candles.length < 15) return (asset?.payout || 80);
 
@@ -2345,7 +2443,7 @@ class IQOptionBridge {
       if (isTriggerWindow && this.lastServerMhiTrigger !== targetCandleStart) {
         this.lastServerMhiTrigger = targetCandleStart;
         for (const assetId of this.botState.selectedBotAssetIds) {
-          const asset = DEFAULT_ASSETS.find((item) => item.id === assetId);
+          const asset = this.catalogAssets.find((item) => item.id === assetId);
           if (!asset) continue;
 
           const candles = candleStore.get(getStoreKey(assetId, timeframe)) || [];
@@ -2558,19 +2656,16 @@ async function startServer() {
     const timeframe = Number(req.query.timeframe) || 60;
     const count = Math.min(300, Math.max(60, Number(req.query.count) || 180));
     const data: Record<number, Candle[]> = {};
-    for (const asset of DEFAULT_ASSETS) {
-      const resolved = iqBridge.resolveActive(asset.id);
-      const list =
-        candleStore.get(getStoreKey(resolved.activeId, timeframe)) ||
-        candleStore.get(getStoreKey(asset.id, timeframe)) ||
-        ensureInitialCandles(resolved.activeId, timeframe, count);
-      data[asset.id] = list.slice(-count);
+    for (const asset of iqBridge.catalogAssets) {
+      const resolved = iqBridge.resolveActive(asset.id, asset.ticker);
+      const list = iqBridge.getCatalogCandles(asset, timeframe, count);
+      data[asset.id] = list;
       if (resolved.activeId !== asset.id) {
-        data[resolved.activeId] = list.slice(-count);
+        data[resolved.activeId] = list;
       }
     }
     res.json({
-      assets: DEFAULT_ASSETS,
+      assets: iqBridge.catalogAssets,
       timeframe,
       candlesByAsset: data,
       serverTimestamp: Math.floor(Date.now() / 1000),
