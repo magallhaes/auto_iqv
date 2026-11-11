@@ -832,7 +832,15 @@ class IQOptionBridge {
   }
 
   public testTelegram() {
-    return this.sendTelegramMessage('QuantIQ: teste de notificações do Telegram recebido com sucesso.', true);
+    return this.sendTelegramMessage('✅ QuantIQ | Teste de notificações recebido com sucesso.', true);
+  }
+
+  private formatTelegramTimestamp(timestamp: number) {
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      dateStyle: 'short',
+      timeStyle: 'medium',
+    }).format(new Date(timestamp));
   }
 
   private notifyTelegramOrderEntry(order: TradeOrder) {
@@ -841,13 +849,13 @@ class IQOptionBridge {
       this.authenticated ? 'IQ Option' : 'Modo local';
     const stage = order.galeStep === 0 ? 'Entrada inicial' : `Gale ${order.galeStep}`;
     const message = [
-      'QuantIQ | SINAL DE ENTRADA',
-      `${order.assetTicker} · ${order.direction}`,
-      `Estratégia: ${order.strategyLabel}`,
-      `${stage} · ${executionMode}`,
-      `Valor: ${order.amount.toFixed(2)} ${this.currency}`,
-      `Preço: ${order.openPrice.toFixed(5)}`,
-      `Horário: ${new Date(order.timestamp * 1000).toLocaleString('pt-BR')}`,
+      '🤖 QuantIQ | NOVA ENTRADA',
+      `${order.direction === 'CALL' ? '🟢 📈' : '🔴 📉'} ${order.assetTicker} · ${order.direction}`,
+      `🧠 Estratégia: ${order.strategyLabel}`,
+      `🎯 ${stage} · ${executionMode}`,
+      `💰 Valor: ${order.amount.toFixed(2)} ${this.currency}`,
+      `📍 Preço: ${order.openPrice.toFixed(5)}`,
+      `🕒 Brasília: ${this.formatTelegramTimestamp(order.timestamp * 1000)}`,
     ].join('\n');
     void this.sendTelegramMessage(message);
   }
@@ -861,14 +869,22 @@ class IQOptionBridge {
       EQUAL: 'EMPATE',
       REJECTED: 'REJEITADA',
     };
+    const resultIcon: Record<TradeOrder['status'], string> = {
+      OPEN: '⏳',
+      WIN: '✅',
+      LOSS: '❌',
+      EQUAL: '➖',
+      REJECTED: '🚫',
+    };
     const profit = `${order.profit >= 0 ? '+' : '-'}${Math.abs(order.profit).toFixed(2)} ${this.currency}`;
     const message = [
-      'QuantIQ | RESULTADO DA ORDEM',
+      `${resultIcon[order.status]} QuantIQ | RESULTADO DA ORDEM`,
       `${order.assetTicker} · ${order.direction} · ${resultLabel[order.status]}`,
-      `Estratégia: ${order.strategyLabel}`,
-      `Etapa: ${order.galeStep === 0 ? 'Entrada inicial' : `Gale ${order.galeStep}`}`,
-      `Resultado: ${profit}`,
-      `Fechamento: ${order.closePrice?.toFixed(5) || 'n/d'}`,
+      `🧠 Estratégia: ${order.strategyLabel}`,
+      `🎯 Etapa: ${order.galeStep === 0 ? 'Entrada inicial' : `Gale ${order.galeStep}`}`,
+      `💰 Resultado: ${profit}`,
+      `📍 Fechamento: ${order.closePrice?.toFixed(5) || 'n/d'}`,
+      `🕒 Brasília: ${this.formatTelegramTimestamp(Date.now())}`,
       order.brokerMessage || '',
     ].filter(Boolean).join('\n');
     void this.sendTelegramMessage(message);
