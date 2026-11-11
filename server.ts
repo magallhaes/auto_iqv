@@ -1110,6 +1110,12 @@ class IQOptionBridge {
               if (matchedOrder) {
                 matchedOrder.iqOptionOrderId = String(optionId);
                 matchedOrder.brokerConfirmed = true;
+                if (m.value && Number(m.value) > 0) {
+                  matchedOrder.openPrice = Number(m.value);
+                }
+                if (m.exp && Number(m.exp) > 0) {
+                  matchedOrder.expirationTimestamp = Number(m.exp);
+                }
                 matchedOrder.brokerMessage = `Ordem aceita pela IQ Option (ID #${optionId})`;
                 saveOrdersToDisk(this.ordersStore);
                 this.broadcast({
@@ -1268,10 +1274,25 @@ class IQOptionBridge {
                   this.ingestRealCandle(tId, size, candleObj);
                 }
               }
-            } else if (msg.name === 'history-positions' && msg.msg && Array.isArray(msg.msg.positions)) {
-              this.handleHistoryPositions(msg.msg.positions);
-            } else if (msg.name === 'position-changed' && msg.msg) {
-              this.handleHistoryPositions([msg.msg]);
+            } else if (
+              (msg.name === 'history-positions' || msg.name === 'positions') &&
+              msg.msg
+            ) {
+              const list = Array.isArray(msg.msg.positions)
+                ? msg.msg.positions
+                : Array.isArray(msg.msg)
+                ? msg.msg
+                : [];
+              if (list.length > 0) this.handleHistoryPositions(list);
+            } else if (
+              (msg.name === 'position-changed' ||
+                msg.name === 'option-closed' ||
+                msg.name === 'socket-option-closed' ||
+                msg.name === 'option-archived') &&
+              msg.msg
+            ) {
+              const posItem = msg.msg.position || msg.msg;
+              this.handleHistoryPositions([posItem]);
             }
           } catch {
             // ignore malformed packet
@@ -1661,9 +1682,18 @@ class IQOptionBridge {
       {
         name: 'portfolio.get-history-positions',
         version: '1.0',
-        body: { user_balance_id: balanceId, limit: 10 },
+        body: { user_balance_id: balanceId, limit: 12 },
       },
       this.nextRequestId('hist_pos')
+    );
+    this.sendToIQ(
+      'sendMessage',
+      {
+        name: 'get-history-positions',
+        version: '2.0',
+        body: { user_balance_id: balanceId, limit: 12, offset: 0 },
+      },
+      this.nextRequestId('hist_pos_v2')
     );
   }
 
@@ -1672,60 +1702,132 @@ class IQOptionBridge {
     let anyUpdated = false;
 
     for (const pos of positions) {
-      const extId = String(pos.external_id || pos.id || pos.raw_event?.option_id || '');
-      if (!extId) continue;
+      if (!pos || typeof pos !== 'object') continue;
 
-      const order = this.ordersStore.find(
-        (o) =>
-          o.status === 'OPEN' &&
-          (String(o.iqOptionOrderId) === extId || o.id === extId)
+      // 1. Unwrap nested raw_event if wrapped (e.g. binary_options_option_changed1)
+      let rawObj: any = pos.raw_event;
+      if (rawObj && typeof rawObj === 'object') {
+        const subKeys = Object.keys(rawObj);
+        if (subKeys.length > 0 && typeof rawObj[subKeys[0]] === 'object') {
+          rawObj = rawObj[subKeys[0]];
+        }
+      }
+
+      // 2. Identify Option ID / External ID
+      const optId = String(
+        pos.external_id ||
+        pos.option_id ||
+        pos.id ||
+        rawObj?.option_id ||
+        rawObj?.id ||
+        ''
       );
+
+      // 3. Find matching OPEN order in ordersStore
+      const order = this.ordersStore.find((o) => {
+        if (o.status !== 'OPEN') return false;
+        if (optId && (String(o.iqOptionOrderId) === optId || o.id === optId)) return true;
+        // Match by creation timestamp (+/- 4 seconds) if same asset
+        if (pos.open_time && o.assetId) {
+          const posOpenSec = Math.floor(
+            Number(pos.open_time) / (Number(pos.open_time) > 1e11 ? 1000 : 1)
+          );
+          if (Math.abs(posOpenSec - o.timestamp) <= 4) {
+            return true;
+          }
+        }
+        return false;
+      });
 
       if (!order) continue;
 
+      // 4. Check if position is actually closed
       const isClosed =
         pos.status === 'closed' ||
+        pos.status === 'won' ||
+        pos.status === 'loose' ||
+        pos.status === 'equal' ||
         pos.close_reason != null ||
-        pos.raw_event?.result != null;
+        rawObj?.result != null ||
+        pos.close_time != null;
+
       if (!isClosed) continue;
 
-      const closeReason = String(
-        pos.close_reason || pos.raw_event?.result || ''
-      ).toLowerCase();
+      // 5. Extract accurate Result: WIN vs LOSS vs EQUAL
+      // Note: IQ Option API uses "win", "loose" (with double 'o'), and "equal"
+      const resultToken = String(
+        pos.close_reason ||
+        rawObj?.result ||
+        (pos.pnl > 0 ? 'win' : pos.pnl < 0 ? 'loose' : '')
+      )
+        .toLowerCase()
+        .trim();
+
+      const pnlVal =
+        typeof pos.pnl === 'number'
+          ? pos.pnl
+          : typeof pos.pnl_realized === 'number'
+          ? pos.pnl_realized
+          : null;
+
       const isWin =
-        closeReason === 'win' ||
-        (typeof pos.pnl === 'number' && pos.pnl > 0) ||
-        (typeof pos.pnl_realized === 'number' && pos.pnl_realized > 0);
+        resultToken === 'win' ||
+        (pnlVal !== null && pnlVal > 0) ||
+        (typeof pos.close_profit === 'number' &&
+          typeof pos.invest === 'number' &&
+          pos.close_profit > pos.invest) ||
+        (typeof rawObj?.win_enrolled_amount === 'number' &&
+          rawObj.win_enrolled_amount > (rawObj.amount || 0));
+
       const isEqual =
-        closeReason === 'equal' ||
-        (!isWin && typeof pos.pnl === 'number' && pos.pnl === 0 && closeReason !== 'loose');
+        resultToken === 'equal' ||
+        (!isWin && resultToken !== 'loose' && pnlVal !== null && pnlVal === 0);
 
-      const rawPnl =
-        pos.pnl ??
-        pos.pnl_realized ??
-        pos.close_profit ??
-        (isWin ? (order.amount * order.payoutPercent) / 100 : -order.amount);
-      const netProfit = isEqual
-        ? 0
-        : isWin
-        ? Number(Number(rawPnl).toFixed(2))
-        : -order.amount;
+      // 6. Net Profit
+      let netProfit = 0;
+      if (isEqual) {
+        netProfit = 0;
+      } else if (isWin) {
+        if (pnlVal !== null && pnlVal > 0) {
+          netProfit = Number(pnlVal.toFixed(2));
+        } else if (
+          typeof pos.close_profit === 'number' &&
+          typeof pos.invest === 'number' &&
+          pos.close_profit > pos.invest
+        ) {
+          netProfit = Number((pos.close_profit - pos.invest).toFixed(2));
+        } else if (typeof rawObj?.profit_amount === 'number' && rawObj.profit_amount > 0) {
+          netProfit = Number(rawObj.profit_amount.toFixed(2));
+        } else {
+          netProfit = Number(((order.amount * order.payoutPercent) / 100).toFixed(2));
+        }
+      } else {
+        netProfit = -order.amount;
+      }
 
-      order.openPrice = Number(pos.open_quote || pos.raw_event?.value || order.openPrice);
-      order.closePrice = Number(
+      // 7. Extract real Open and Close quotes from broker
+      const openQuote = Number(pos.open_quote || rawObj?.value || order.openPrice);
+      const closeQuote = Number(
         pos.close_quote ||
+          rawObj?.expiration_value ||
           pos.raw_event?.expiration_value ||
           order.closePrice ||
-          order.openPrice
+          openQuote
       );
+
+      order.openPrice = openQuote;
+      order.closePrice = closeQuote;
       order.status = isEqual ? 'EQUAL' : isWin ? 'WIN' : 'LOSS';
       order.profit = netProfit;
       order.brokerConfirmed = true;
+      if (optId && (!order.iqOptionOrderId || String(order.iqOptionOrderId).startsWith('IQ-'))) {
+        order.iqOptionOrderId = optId;
+      }
       order.brokerMessage = isWin
-        ? `WIN na IQ Option (+R$ ${netProfit.toFixed(2)})`
+        ? `WIN confirmado pela IQ Option (+R$ ${netProfit.toFixed(2)})`
         : isEqual
         ? 'EMPATE na IQ Option (R$ 0,00)'
-        : `LOSS na IQ Option (-R$ ${Math.abs(netProfit).toFixed(2)})`;
+        : `LOSS confirmado pela IQ Option (-R$ ${Math.abs(netProfit).toFixed(2)})`;
 
       // Refresh real balances from IQ Option
       this.sendToIQ(
@@ -1840,12 +1942,13 @@ class IQOptionBridge {
     }
 
     for (const order of openOrders) {
-      const expTime = order.expirationTimestamp || (order.timestamp + (order.timeframe || 60));
+      const tf = order.timeframe || 60;
+      const expTime = order.expirationTimestamp || (order.timestamp + tf);
 
       // For broker-confirmed orders, wait for official broker settlement!
-      // Only do fallback if 25 seconds past expiration without broker response
+      // Only do fallback if 45 seconds past expiration without broker response
       if (order.brokerConfirmed) {
-        if (nowSec < expTime + 25) {
+        if (nowSec < expTime + 45) {
           continue;
         }
       } else if (nowSec < expTime) {
@@ -1853,21 +1956,27 @@ class IQOptionBridge {
       }
 
       // Offline / Local fallback settlement (when disconnected or after safety timeout)
-      const tf = order.timeframe || 60;
       const pairCandles = candleStore.get(getStoreKey(order.assetId, tf)) || [];
-      const orderBucket = Math.floor(order.timestamp / tf) * tf;
+      // CRITICAL: The candle of the trade is the one that FINISHES at expTime (from: expTime - tf)!
+      const tradeCandleFrom = expTime - tf;
       const targetCandle =
-        pairCandles.find((c) => c.from === orderBucket) || pairCandles[pairCandles.length - 1];
-      const closePrice = targetCandle ? targetCandle.close : order.openPrice;
+        pairCandles.find((c) => c.from === tradeCandleFrom) ||
+        pairCandles.find((c) => c.from === Math.floor(order.timestamp / tf) * tf) ||
+        pairCandles[pairCandles.length - 1];
+
+      const entryPrice = order.openPrice || (targetCandle ? targetCandle.open : 0);
+      const closePrice = targetCandle ? targetCandle.close : entryPrice;
 
       let isWin = false;
       let isEqual = false;
-      if (Math.abs(closePrice - order.openPrice) < 0.000001) {
+      const priceDiff = closePrice - entryPrice;
+
+      if (Math.abs(priceDiff) <= 0.000001) {
         isEqual = true;
       } else if (order.direction === 'CALL') {
-        isWin = closePrice > order.openPrice;
+        isWin = priceDiff > 0.000001;
       } else {
-        isWin = closePrice < order.openPrice;
+        isWin = priceDiff < -0.000001;
       }
 
       const netProfit = isEqual
