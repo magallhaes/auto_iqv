@@ -962,6 +962,82 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
             );
           })}
 
+          {/* Keep live entry markers above candle bodies so robot orders stay visible. */}
+          {openOrders.map((ord) => {
+            const entryY = chartGeometry.priceToY(ord.openPrice);
+            const entryCandleIdx = visibleCandles.findIndex(
+              (candle) => ord.timestamp >= candle.from && ord.timestamp < candle.to
+            );
+            const entryX =
+              entryCandleIdx >= 0
+                ? entryCandleIdx * chartGeometry.stepX + chartGeometry.stepX / 2
+                : lastX;
+            const isCall = ord.direction === 'CALL';
+            const markerColor = isCall ? '#00E676' : '#FF3B30';
+            const badgeX = Math.max(
+              8,
+              Math.min(chartGeometry.plotWidth - 158, entryX + 12)
+            );
+            const badgeY = Math.max(14, Math.min(chartGeometry.height - 14, entryY - 14));
+
+            return (
+              <g key={`live_entry_marker_${ord.id}`}>
+                <line
+                  x1={0}
+                  y1={entryY}
+                  x2={chartGeometry.plotWidth}
+                  y2={entryY}
+                  stroke={markerColor}
+                  strokeWidth="1.5"
+                  strokeDasharray="5 3"
+                  strokeOpacity="0.95"
+                />
+                <circle
+                  cx={entryX}
+                  cy={entryY}
+                  r="8"
+                  fill="#0B0E14"
+                  stroke={markerColor}
+                  strokeWidth="2.5"
+                />
+                <text
+                  x={entryX}
+                  y={entryY + 3}
+                  fill={markerColor}
+                  fontSize="9"
+                  fontWeight="900"
+                  textAnchor="middle"
+                >
+                  {isCall ? '▲' : '▼'}
+                </text>
+                <g transform={`translate(${badgeX}, ${badgeY})`}>
+                  <rect
+                    width={150}
+                    height={22}
+                    rx={3}
+                    fill="#0B0E14"
+                    fillOpacity="0.94"
+                    stroke={markerColor}
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={7}
+                    y={14}
+                    fill={markerColor}
+                    fontSize="9"
+                    fontWeight="bold"
+                    fontFamily="JetBrains Mono, monospace"
+                  >
+                    ROBÔ {ord.direction} · {ord.openPrice.toFixed(chartGeometry.decimals)}
+                  </text>
+                </g>
+                <title>
+                  {`${ord.strategyLabel}: entrada ${ord.direction} em ${ord.openPrice.toFixed(chartGeometry.decimals)}${ord.brokerConfirmed ? ' confirmada pela corretora' : ''}`}
+                </title>
+              </g>
+            );
+          })}
+
           {/* EMA 200 (Macro Trend Moving Average - Vibrant Purple) */}
           {config.useMacroTrendFilter !== false && (
             <path
