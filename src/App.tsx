@@ -1034,7 +1034,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#0B0F17] text-slate-100 flex flex-col">
       {/* Top Bar Contract: Strictly 3 Zones separated by gap-8 */}
-      <header className="flex items-center justify-between gap-8 px-6 py-3.5 border-b border-slate-800 bg-[#0B0F17]">
+      <header className="flex flex-col gap-3 px-4 py-3 border-b border-slate-800 bg-[#0B0F17] md:flex-row md:items-center md:justify-between md:gap-8 md:px-6 md:py-3.5">
         {/* Zone 1: Single text element wordmark */}
         <a
           href="#terminal"
@@ -1042,20 +1042,20 @@ export default function App() {
             e.preventDefault();
             setActiveTab('TERMINAL');
           }}
-          className="text-lg font-display font-bold tracking-tight text-white whitespace-nowrap shrink-0"
+          className="text-lg font-display font-bold tracking-tight text-white whitespace-nowrap shrink-0 self-start md:self-auto"
         >
           QuantIQ
         </a>
 
         {/* Zone 2: Concise single-line navigation links */}
-        <nav className="flex items-center gap-6 text-sm font-medium text-slate-400 overflow-x-auto">
+        <nav className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-400 md:gap-6 md:text-sm md:overflow-x-auto">
           <a
             href="#terminal"
             onClick={(e) => {
               e.preventDefault();
               setActiveTab('TERMINAL');
             }}
-            className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
+            className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'TERMINAL'
                 ? 'text-white border-blue-500'
                 : 'border-transparent hover:text-white'
@@ -1069,7 +1069,7 @@ export default function App() {
               e.preventDefault();
               setActiveTab('CATALOG');
             }}
-            className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
+            className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'CATALOG'
                 ? 'text-white border-blue-500'
                 : 'border-transparent hover:text-white'
@@ -1083,7 +1083,7 @@ export default function App() {
               e.preventDefault();
               setActiveTab('SIGNALS');
             }}
-            className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 flex items-center gap-1.5 ${
+            className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 flex items-center gap-1.5 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'SIGNALS'
                 ? 'text-white border-blue-500'
                 : 'border-transparent hover:text-white'
@@ -1102,7 +1102,7 @@ export default function App() {
               e.preventDefault();
               setActiveTab('RISK');
             }}
-            className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
+            className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'RISK'
                 ? 'text-white border-blue-500'
                 : 'border-transparent hover:text-white'
@@ -1116,7 +1116,7 @@ export default function App() {
               e.preventDefault();
               setActiveTab('PERFORMANCE');
             }}
-            className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 flex items-center gap-1.5 ${
+            className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 flex items-center gap-1.5 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'PERFORMANCE'
                 ? 'text-white border-emerald-500 font-bold'
                 : 'border-transparent hover:text-white'
@@ -1131,7 +1131,7 @@ export default function App() {
               e.preventDefault();
               setActiveTab('NEWS');
             }}
-            className={`py-1 transition-colors whitespace-nowrap shrink-0 border-b-2 ${
+            className={`py-1 transition-all duration-200 ease-out whitespace-nowrap shrink-0 border-b-2 hover:-translate-y-0.5 active:scale-95 ${
               activeTab === 'NEWS'
                 ? 'text-white border-blue-500'
                 : 'border-transparent hover:text-white'
@@ -1142,13 +1142,13 @@ export default function App() {
         </nav>
 
         {/* Zone 3: IQ Connect & User Session Actions */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center justify-between gap-2 shrink-0 w-full md:w-auto md:justify-end">
           <button
             onClick={() => setIsConnectModalOpen(true)}
-            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+            className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all duration-200 ease-out whitespace-nowrap shrink-0 cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
               connectionStatus.authenticated
                 ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-600/30'
-                : 'bg-blue-600 hover:bg-blue-500 text-white'
+                : 'bg-blue-600 hover:bg-blue-500 text-white shadow-md shadow-blue-500/20'
             }`}
           >
             {connectionStatus.authenticated
@@ -1177,16 +1177,16 @@ export default function App() {
       </header>
 
       {/* Operational Toolbar Strip (Account Switcher, Inline Entry/Stop Config & Page Switchers) */}
-      <div className="bg-[#111827] border-b border-slate-800 px-6 py-3">
-        <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-4">
+      <div className="bg-[#111827] border-b border-slate-800 px-3 py-3 sm:px-6">
+        <div className="max-w-[1440px] mx-auto flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           {/* Left: Account Mode & Balance */}
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <div className="inline-flex items-center p-0.5 bg-[#0B0F17] border border-slate-800 rounded-lg">
+          <div className="flex flex-col gap-2 text-[10px] sm:text-xs md:flex-wrap md:flex-row md:items-center md:gap-3">
+            <div className="inline-flex items-center p-0.5 bg-[#0B0F17] border border-slate-800 rounded-lg w-fit">
               <button
                 onClick={() => handleSwitchAccount('PRACTICE')}
-                className={`px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`px-2 py-1 rounded-md font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
                   connectionStatus.activeBalanceType === 'PRACTICE'
-                    ? 'bg-amber-500 text-slate-950'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -1194,9 +1194,9 @@ export default function App() {
               </button>
               <button
                 onClick={() => handleSwitchAccount('REAL')}
-                className={`px-2.5 py-1 rounded-md font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+                className={`px-2 py-1 rounded-md font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
                   connectionStatus.activeBalanceType === 'REAL'
-                    ? 'bg-emerald-500 text-slate-950'
+                    ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -1214,10 +1214,10 @@ export default function App() {
               </strong>
             </div>
 
-            <span className="text-slate-700">|</span>
+            <span className="text-slate-700 hidden md:inline">|</span>
 
             {/* Inline Quick Inputs for Entrada, Stop Win & Stop Loss */}
-            <div className="flex items-center gap-2 font-mono tabular-nums">
+            <div className="flex flex-wrap items-center gap-2 font-mono tabular-nums">
               <label className="flex items-center gap-1 text-slate-300">
                 <span className="text-slate-400">Entrada R$:</span>
                 <input
@@ -1230,7 +1230,7 @@ export default function App() {
                       baseEntryAmount: Math.max(2, Number(e.target.value)),
                     }))
                   }
-                  className="w-16 px-2 py-1 bg-[#0B0F17] border border-slate-700 rounded text-white text-xs font-bold focus:outline-none focus:border-blue-500"
+                  className="w-14 sm:w-16 px-2 py-1 bg-[#0B0F17] border border-slate-700 rounded text-white text-[10px] sm:text-xs font-bold focus:outline-none focus:border-blue-500"
                 />
               </label>
 
@@ -1246,7 +1246,7 @@ export default function App() {
                       stopWin: Math.max(5, Number(e.target.value)),
                     }))
                   }
-                  className="w-16 px-2 py-1 bg-[#0B0F17] border border-emerald-800/70 rounded text-emerald-400 text-xs font-bold focus:outline-none focus:border-emerald-500"
+                  className="w-14 sm:w-16 px-2 py-1 bg-[#0B0F17] border border-emerald-800/70 rounded text-emerald-400 text-[10px] sm:text-xs font-bold focus:outline-none focus:border-emerald-500"
                 />
               </label>
 
@@ -1262,7 +1262,7 @@ export default function App() {
                       stopLoss: Math.max(5, Number(e.target.value)),
                     }))
                   }
-                  className="w-16 px-2 py-1 bg-[#0B0F17] border border-red-800/70 rounded text-red-400 text-xs font-bold focus:outline-none focus:border-red-500"
+                  className="w-14 sm:w-16 px-2 py-1 bg-[#0B0F17] border border-red-800/70 rounded text-red-400 text-[10px] sm:text-xs font-bold focus:outline-none focus:border-red-500"
                 />
               </label>
             </div>
@@ -1286,13 +1286,13 @@ export default function App() {
           </div>
 
           {/* Right: Prominent Page Switcher Buttons & Master Bot Toggle */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 md:justify-end">
             <button
               onClick={() => setActiveTab('CATALOG')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] sm:text-xs font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
                 activeTab === 'CATALOG'
-                  ? 'bg-blue-600 border-blue-500 text-white'
-                  : 'bg-[#0B0F17] border-slate-700 text-slate-200 hover:border-blue-500'
+                  ? 'bg-blue-600 border-blue-500 text-white shadow-md shadow-blue-500/20'
+                  : 'bg-[#0B0F17] border-slate-700 text-slate-200 hover:border-blue-500 hover:text-white'
               }`}
             >
               <BarChart3 className="w-3.5 h-3.5 text-blue-400" />
@@ -1301,16 +1301,16 @@ export default function App() {
 
             <button
               onClick={() => setActiveTab('SIGNALS')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] sm:text-xs font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
                 activeTab === 'SIGNALS'
-                  ? 'bg-amber-600 border-amber-500 text-white'
-                  : 'bg-[#0B0F17] border-slate-700 text-slate-200 hover:border-amber-500'
+                  ? 'bg-amber-600 border-amber-500 text-white shadow-md shadow-amber-500/20'
+                  : 'bg-[#0B0F17] border-slate-700 text-slate-200 hover:border-amber-500 hover:text-white'
               }`}
             >
               <ListPlus className="w-3.5 h-3.5 text-amber-400" />
               Lista de Sinais
               {scheduledSignals.length > 0 && (
-                <span className="ml-1 px-1.5 py-0.2 text-[10px] bg-[#0B0F17] text-amber-300 font-mono rounded">
+                <span className="ml-1 px-1.5 py-0.2 text-[9px] bg-[#0B0F17] text-amber-300 font-mono rounded">
                   {scheduledSignals.length}
                 </span>
               )}
@@ -1318,10 +1318,10 @@ export default function App() {
 
             <button
               onClick={() => setActiveTab('RISK')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] sm:text-xs font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
                 activeTab === 'RISK'
-                  ? 'bg-blue-600 border-blue-500 text-white'
-                  : 'bg-[#0B0F17] border-slate-700 text-slate-200 hover:border-blue-500'
+                  ? 'bg-blue-600 border-blue-500 text-white shadow-md shadow-blue-500/20'
+                  : 'bg-[#0B0F17] border-slate-700 text-slate-200 hover:border-blue-500 hover:text-white'
               }`}
             >
               <Settings2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -1330,21 +1330,21 @@ export default function App() {
 
             <button
               onClick={handleToggleBot}
-              className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-semibold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer hover:-translate-y-0.5 active:scale-95 ${
                 isBotRunning
-                  ? 'bg-red-600 hover:bg-red-500 text-white'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                  ? 'bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-500/20'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-500/20'
               }`}
             >
               {isBotRunning ? (
                 <>
                   <Pause className="w-3.5 h-3.5" />
-                  Pausar Robô 24/7 ({botMode === 'STRATEGY' ? 'MHI' : botMode === 'SIGNAL_LIST' ? 'Lista' : 'MHI + Lista'})
+                  Pausar Robô 24/7
                 </>
               ) : (
                 <>
                   <Bot className="w-3.5 h-3.5" />
-                  Iniciar Robô 24/7 ({botMode === 'STRATEGY' ? `${selectedBotAssetIds.length} Pares MHI` : botMode === 'SIGNAL_LIST' ? `${scheduledSignals.length} Sinais` : 'MHI + Lista'})
+                  Iniciar Robô 24/7
                 </>
               )}
             </button>
