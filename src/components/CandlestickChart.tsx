@@ -94,6 +94,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     const allCloses = candles.map((c) => c.close);
     const fullEmaFast = calculateEMA(allCloses, config.emaFastPeriod || 9);
     const fullEmaSlow = calculateEMA(allCloses, config.emaSlowPeriod || 21);
+    const fullEmaMacro = calculateEMA(allCloses, config.macroTrendPeriod || 200);
     const fullBB = calculateBollingerBands(
       allCloses,
       config.bbPeriod || 20,
@@ -103,6 +104,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     const startOffset = Math.max(0, candles.length - visibleCandles.length);
     const emaFastSlice = fullEmaFast.slice(startOffset);
     const emaSlowSlice = fullEmaSlow.slice(startOffset);
+    const emaMacroSlice = fullEmaMacro.slice(startOffset);
     const bbUpperSlice = fullBB.upper.slice(startOffset);
     const bbLowerSlice = fullBB.lower.slice(startOffset);
 
@@ -198,6 +200,7 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
       yToPrice,
       emaFastPath: buildPath(emaFastSlice),
       emaSlowPath: buildPath(emaSlowSlice),
+      emaMacroPath: buildPath(emaMacroSlice),
       bbUpperPath: buildPath(bbUpperSlice),
       bbLowerPath: buildPath(bbLowerSlice),
       quadrantLines,
@@ -371,13 +374,34 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
         </div>
 
         {/* Right: Real-time Indicator Snapshot */}
-        <div className="flex items-center gap-3 text-[11px] font-mono tabular-nums">
+        <div className="flex flex-wrap items-center gap-2.5 text-[11px] font-mono tabular-nums">
           <span className="text-[#00E5FF] font-semibold">
             EMA {config.emaFastPeriod}: {snapshot.ema9.toFixed(chartGeometry.decimals)}
           </span>
           <span className="text-[#FFB300] font-semibold">
             EMA {config.emaSlowPeriod}: {snapshot.ema21.toFixed(chartGeometry.decimals)}
           </span>
+          {config.useMacroTrendFilter !== false && (
+            <span className="text-[#C084FC] font-semibold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#A855F7]" />
+              EMA {config.macroTrendPeriod || 200}: {snapshot.ema200.toFixed(chartGeometry.decimals)}
+            </span>
+          )}
+          {config.useMacroTrendFilter !== false && (
+            snapshot.macroTrend === 'BULLISH' ? (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                ▲ Macro Alta (CALL)
+              </span>
+            ) : snapshot.macroTrend === 'BEARISH' ? (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                ▼ Macro Baixa (PUT)
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                ● Macro Neutro
+              </span>
+            )
+          )}
           {config.useBollingerFilter && (
             <span className="text-indigo-400">
               BB({config.bbPeriod}, {config.bbStdDev})
@@ -909,6 +933,18 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
               </g>
             );
           })}
+
+          {/* EMA 200 (Macro Trend Moving Average - Vibrant Purple) */}
+          {config.useMacroTrendFilter !== false && (
+            <path
+              d={chartGeometry.emaMacroPath}
+              fill="none"
+              stroke="#A855F7"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              opacity="0.9"
+            />
+          )}
 
           {/* EMA 21 (Slow Moving Average - Vibrant Golden Yellow) */}
           <path

@@ -88,6 +88,10 @@ interface ServerBotState {
     blockOnDoji: boolean;
     timeframe: 60 | 300;
     entryTimingSecond: 58 | 59 | 0;
+    useMacroTrendFilter?: boolean;
+    macroTrendPeriod?: number;
+    macroTrendTimeframe?: 'CURRENT' | 'M5' | 'M15';
+    macroTrendRule?: 'STRICT_BLOCK' | 'CONFLUENCE_SCORE';
   };
   signalListConfig: {
     enabled: boolean;
@@ -164,6 +168,10 @@ function loadBotStateFromDisk(): ServerBotState {
       blockOnDoji: true,
       timeframe: 60,
       entryTimingSecond: 59,
+      useMacroTrendFilter: true,
+      macroTrendPeriod: 200,
+      macroTrendTimeframe: 'CURRENT',
+      macroTrendRule: 'STRICT_BLOCK',
     },
     signalListConfig: {
       enabled: true,
@@ -2072,6 +2080,17 @@ class IQOptionBridge {
     }
   }
 
+  private calculateEma(values: number[], period: number): number[] {
+    if (values.length === 0) return [];
+    const k = 2 / (period + 1);
+    const emaArray: number[] = new Array(values.length);
+    emaArray[0] = values[0];
+    for (let i = 1; i < values.length; i++) {
+      emaArray[i] = values[i] * k + emaArray[i - 1] * (1 - k);
+    }
+    return emaArray;
+  }
+
   public runBackgroundBot(nowSec: number) {
     if (!this.botState.isRunning) return;
     if (this.botState.riskState.stopWinReached || this.botState.riskState.stopLossReached) return;
@@ -2102,6 +2121,33 @@ class IQOptionBridge {
         const triggerTime = sig.targetTimestamp - advance;
 
         if (nowSec >= triggerTime && nowSec <= triggerTime + 2) {
+          // Check Trend Filter for Signal List if active
+          if (this.botState.signalListConfig.useEmaTrendFilter) {
+            const pairCandles = candleStore.get(getStoreKey(sig.assetId, sig.timeframe)) || [];
+            if (pairCandles.length >= 20) {
+              const closes = pairCandles.map((c) => c.close);
+              const emaArr = this.calculateEma(closes, 100);
+              const lastEma = emaArr[emaArr.length - 1];
+              const curPrice = closes[closes.length - 1];
+              if (lastEma) {
+                if (sig.direction === 'CALL' && curPrice < lastEma) {
+                  sig.status = 'BLOCKED_TREND';
+                  console.log(`[Bot Lista] ${sig.ticker} CALL bloqueado por Filtro de Tendência (Preço < EMA 100)`);
+                  saveBotStateToDisk(this.botState);
+                  this.broadcast({ type: 'bot_state', payload: this.botState });
+                  continue;
+                }
+                if (sig.direction === 'PUT' && curPrice > lastEma) {
+                  sig.status = 'BLOCKED_TREND';
+                  console.log(`[Bot Lista] ${sig.ticker} PUT bloqueado por Filtro de Tendência (Preço > EMA 100)`);
+                  saveBotStateToDisk(this.botState);
+                  this.broadcast({ type: 'bot_state', payload: this.botState });
+                  continue;
+                }
+              }
+            }
+          }
+
           sig.status = 'EXECUTING';
           const order = this.executeOrder({
             assetId: sig.assetId,
@@ -2172,6 +2218,30 @@ class IQOptionBridge {
                   ? minorityGreen ? 'GREEN' : 'RED'
                   : minorityGreen ? 'RED' : 'GREEN';
               const direction: 'CALL' | 'PUT' = targetColor === 'GREEN' ? 'CALL' : 'PUT';
+
+              // Filtro Avançado de Trend Global (ex: bloqueia CALL se preço < EMA 200)
+              if (this.botState.strategyConfig.useMacroTrendFilter !== false) {
+                const macroPeriod = this.botState.strategyConfig.macroTrendPeriod || 200;
+                const allCloses = candles.map((c) => c.close);
+                const emaMacroArr = this.calculateEma(allCloses, macroPeriod);
+                const lastMacroEma = emaMacroArr[emaMacroArr.length - 1];
+                const currentPrice = allCloses[allCloses.length - 1];
+
+                if (lastMacroEma) {
+                  if (direction === 'CALL' && currentPrice < lastMacroEma) {
+                    console.log(
+                      `[MHI Bot] ${asset.ticker} CALL bloqueado pelo Filtro de Trend Global (Preço ${currentPrice} < EMA ${macroPeriod} ${lastMacroEma.toFixed(5)})`
+                    );
+                    continue;
+                  }
+                  if (direction === 'PUT' && currentPrice > lastMacroEma) {
+                    console.log(
+                      `[MHI Bot] ${asset.ticker} PUT bloqueado pelo Filtro de Trend Global (Preço ${currentPrice} > EMA ${macroPeriod} ${lastMacroEma.toFixed(5)})`
+                    );
+                    continue;
+                  }
+                }
+              }
 
               this.executeOrder({
                 assetId,

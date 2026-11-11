@@ -56,6 +56,9 @@ import {
   Zap,
   LogOut,
   User,
+  ShieldCheck,
+  TrendingUp,
+  TrendingDown,
 } from 'lucide-react';
 import { playTradingAudio } from './utils/sound';
 
@@ -212,6 +215,11 @@ export default function App() {
     mhiMode: 'MINORIA',
     blockOnDoji: true,
     timeframe: 60,
+    // Filtro de Trend Global (Macro Tendência - EMA 200)
+    useMacroTrendFilter: true,
+    macroTrendPeriod: 200,
+    macroTrendTimeframe: 'CURRENT',
+    macroTrendRule: 'STRICT_BLOCK',
     useEmaFilter: true,
     emaFastPeriod: 9,
     emaSlowPeriod: 21,
@@ -328,8 +336,8 @@ export default function App() {
     try {
       const candleCount =
         strategyConfig.timeframe === 60
-          ? Math.min(300, lookbackHours * 60)
-          : Math.min(240, lookbackHours * 12 * 3);
+          ? Math.max(240, Math.min(300, lookbackHours * 60))
+          : Math.max(200, Math.min(240, lookbackHours * 12 * 3));
       const res = await fetch(
         `/api/iq/catalog-snapshot?timeframe=${strategyConfig.timeframe}&count=${candleCount}`
       );
@@ -360,7 +368,7 @@ export default function App() {
       try {
         const tf = strategyConfig.timeframe;
         const res = await fetch(
-          `/api/iq/candles?assetId=${selectedAssetId}&timeframe=${tf}&count=200`
+          `/api/iq/candles?assetId=${selectedAssetId}&timeframe=${tf}&count=250`
         );
         if (!res.ok || !active) return;
         const data = await res.json();
@@ -850,6 +858,15 @@ export default function App() {
       // optimistic
     }
   };
+
+  // Sync strategyConfig with server bot whenever updated
+  useEffect(() => {
+    fetch('/api/iq/bot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategyConfig }),
+    }).catch(() => {});
+  }, [strategyConfig]);
 
   // Handlers for Account & Connection
   const handleConnectIQ = async (params: {
@@ -2229,6 +2246,136 @@ export default function App() {
                       ))}
                     </div>
                   </div>
+                </div>
+
+                {/* Advanced Global Macro Trend Filter Panel */}
+                <div className="bg-[#0A0E17] border border-purple-500/35 rounded-lg p-3 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-md bg-purple-500/20 border border-purple-500/40 flex items-center justify-center shrink-0">
+                        <TrendingUp className="w-4 h-4 text-purple-400" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <span>Filtro de Trend Global (Macro Tendência)</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono font-semibold">
+                            EMA {strategyConfig.macroTrendPeriod || 200}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Bloqueia CALL abaixo da EMA e bloqueia PUT acima da EMA
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setStrategyConfig((prev) => ({
+                          ...prev,
+                          useMacroTrendFilter: !prev.useMacroTrendFilter,
+                        }))
+                      }
+                      className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors shadow-sm ${
+                        strategyConfig.useMacroTrendFilter !== false
+                          ? 'bg-purple-600 text-white hover:bg-purple-500'
+                          : 'bg-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {strategyConfig.useMacroTrendFilter !== false ? 'ATIVO' : 'DESATIVADO'}
+                    </button>
+                  </div>
+
+                  {strategyConfig.useMacroTrendFilter !== false && (
+                    <div className="space-y-2.5 pt-2 border-t border-slate-800/80">
+                      {/* Parameter Controls: Period & Higher Timeframe */}
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <span className="text-[10px] text-slate-400 block mb-1">
+                            Período da Média Macro
+                          </span>
+                          <div className="grid grid-cols-3 gap-1">
+                            {[200, 100, 50].map((p) => (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() =>
+                                  setStrategyConfig((prev) => ({
+                                    ...prev,
+                                    macroTrendPeriod: p,
+                                  }))
+                                }
+                                className={`py-1 text-[11px] font-mono font-medium rounded transition-colors cursor-pointer ${
+                                  (strategyConfig.macroTrendPeriod || 200) === p
+                                    ? 'bg-purple-600/40 text-purple-200 border border-purple-500/60 font-bold'
+                                    : 'bg-[#121824] text-slate-400 hover:text-white border border-slate-800'
+                                }`}
+                              >
+                                {p}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <span className="text-[10px] text-slate-400 block mb-1">
+                            Timeframe da Trend
+                          </span>
+                          <div className="grid grid-cols-3 gap-1">
+                            {[
+                              { id: 'CURRENT', label: 'M1 (Atual)' },
+                              { id: 'M5', label: 'M5 (Maior)' },
+                              { id: 'M15', label: 'M15 (Macro)' },
+                            ].map((tfOpt) => (
+                              <button
+                                key={tfOpt.id}
+                                type="button"
+                                onClick={() =>
+                                  setStrategyConfig((prev) => ({
+                                    ...prev,
+                                    macroTrendTimeframe: tfOpt.id as any,
+                                  }))
+                                }
+                                className={`py-1 text-[11px] font-mono font-medium rounded transition-colors cursor-pointer ${
+                                  (strategyConfig.macroTrendTimeframe || 'CURRENT') === tfOpt.id
+                                    ? 'bg-purple-600/40 text-purple-200 border border-purple-500/60 font-bold'
+                                    : 'bg-[#121824] text-slate-400 hover:text-white border border-slate-800'
+                                }`}
+                              >
+                                {tfOpt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Real-time Macro Bias Status Card for Active Pair */}
+                      <div className="p-2.5 rounded bg-[#06080E] border border-slate-800/90 text-[11px] flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                        <div className="flex items-center gap-1.5 font-mono text-slate-300">
+                          <span className="font-bold text-white">{activeAsset.ticker}:</span>
+                          <span className="text-slate-400">
+                            Preço = {activeCandles[activeCandles.length - 1]?.close.toFixed(5) || '---'} · EMA {strategyConfig.macroTrendPeriod || 200} = {technicalSnapshot.ema200.toFixed(5)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 font-semibold shrink-0">
+                          {technicalSnapshot.macroTrend === 'BULLISH' ? (
+                            <span className="text-emerald-400 flex items-center gap-1 bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-500/30 text-[10px]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              Tendência de Alta: Só CALL | PUT Bloqueado ⛔
+                            </span>
+                          ) : technicalSnapshot.macroTrend === 'BEARISH' ? (
+                            <span className="text-rose-400 flex items-center gap-1 bg-rose-950/50 px-2 py-0.5 rounded border border-rose-500/30 text-[10px]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                              Tendência de Baixa: Só PUT | CALL Bloqueado ⛔
+                            </span>
+                          ) : (
+                            <span className="text-slate-400 bg-slate-800/40 px-2 py-0.5 rounded border border-slate-700 text-[10px]">
+                              ● Zona Neutra
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Toggleable Indicator Filters */}

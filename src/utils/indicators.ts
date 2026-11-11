@@ -172,6 +172,47 @@ export function detectPriceActionPattern(
   return 'NONE';
 }
 
+/**
+ * Resamples candles into a higher timeframe (e.g. M1 -> M5 or M15)
+ */
+export function resampleCandles(candles: Candle[], targetTfSeconds: number): Candle[] {
+  if (candles.length === 0 || targetTfSeconds <= 0) return candles;
+  const sorted = [...candles].sort((a, b) => a.from - b.from);
+  const buckets = new Map<number, Candle[]>();
+  for (const c of sorted) {
+    const bucketStart = Math.floor(c.from / targetTfSeconds) * targetTfSeconds;
+    const list = buckets.get(bucketStart) || [];
+    list.push(c);
+    buckets.set(bucketStart, list);
+  }
+  const resampled: Candle[] = [];
+  const keys = Array.from(buckets.keys()).sort((a, b) => a - b);
+  for (const k of keys) {
+    const group = buckets.get(k)!;
+    const open = group[0].open;
+    const close = group[group.length - 1].close;
+    let min = Infinity;
+    let max = -Infinity;
+    let volume = 0;
+    for (const c of group) {
+      if (c.min < min) min = c.min;
+      if (c.max > max) max = c.max;
+      volume += c.volume || 0;
+    }
+    resampled.push({
+      id: k,
+      from: k,
+      to: k + targetTfSeconds,
+      open,
+      close,
+      min: isFinite(min) ? min : open,
+      max: isFinite(max) ? max : close,
+      volume,
+    });
+  }
+  return resampled;
+}
+
 export function computeTechnicalSnapshot(
   candles: Candle[],
   config?: Partial<StrategyConfig>
@@ -180,6 +221,9 @@ export function computeTechnicalSnapshot(
     return {
       ema9: 0,
       ema21: 0,
+      ema200: 0,
+      macroTrend: 'NEUTRAL',
+      macroTrendBlockedDirection: 'NONE',
       emaTrend: 'NEUTRAL',
       emaCrossover: 'NONE',
       rsi14: 50,
@@ -202,6 +246,7 @@ export function computeTechnicalSnapshot(
   const closes = candles.map((c) => c.close);
   const fastP = config?.emaFastPeriod ?? 9;
   const slowP = config?.emaSlowPeriod ?? 21;
+  const macroP = config?.macroTrendPeriod ?? 200;
   const rsiP = config?.rsiPeriod ?? 14;
   const bbP = config?.bbPeriod ?? 20;
   const bbStd = config?.bbStdDev ?? 2;
@@ -216,9 +261,10 @@ export function computeTechnicalSnapshot(
 
   const lastIdx = closes.length - 1;
   const prevIdx = Math.max(0, lastIdx - 1);
+  const lastClose = closes[lastIdx];
 
-  const ema9 = emaFastArr[lastIdx] ?? closes[lastIdx];
-  const ema21 = emaSlowArr[lastIdx] ?? closes[lastIdx];
+  const ema9 = emaFastArr[lastIdx] ?? lastClose;
+  const ema21 = emaSlowArr[lastIdx] ?? lastClose;
   const prevEma9 = emaFastArr[prevIdx] ?? ema9;
   const prevEma21 = emaSlowArr[prevIdx] ?? ema21;
 
@@ -226,13 +272,50 @@ export function computeTechnicalSnapshot(
   if (prevEma9 <= prevEma21 && ema9 > ema21) emaCrossover = 'GOLDEN_CROSS';
   else if (prevEma9 >= prevEma21 && ema9 < ema21) emaCrossover = 'DEATH_CROSS';
 
-  const lastClose = closes[lastIdx];
   const emaTrend: TechnicalSnapshot['emaTrend'] =
     ema9 > ema21 && lastClose >= ema21
       ? 'BULLISH'
       : ema9 < ema21 && lastClose <= ema21
       ? 'BEARISH'
       : 'NEUTRAL';
+
+  // Compute Macro EMA 200 (including higher-timeframe resampling if configured)
+  let ema200 = lastClose;
+  const macroTf = config?.macroTrendTimeframe ?? 'CURRENT';
+  if ((macroTf === 'M5' || macroTf === 'M15') && (config?.timeframe === 60 || !config?.timeframe)) {
+    const targetSeconds = macroTf === 'M5' ? 300 : 900;
+    const higherCandles = resampleCandles(candles, targetSeconds);
+    if (higherCandles.length > 0) {
+      const higherCloses = higherCandles.map((c) => c.close);
+      const higherEma = calculateEMA(higherCloses, macroP);
+      ema200 = higherEma[higherEma.length - 1] ?? lastClose;
+    } else {
+      const emaMacroArr = calculateEMA(closes, macroP);
+      ema200 = emaMacroArr[lastIdx] ?? lastClose;
+    }
+  } else {
+    const emaMacroArr = calculateEMA(closes, macroP);
+    ema200 = emaMacroArr[lastIdx] ?? lastClose;
+  }
+
+  // Macro Trend Bias:
+  // Preço acima da EMA 200 -> Tendência Macro de ALTA (Bloqueia PUT)
+  // Preço abaixo da EMA 200 -> Tendência Macro de BAIXA (Bloqueia CALL)
+  const macroDiff = lastClose - ema200;
+  const macroThreshold = (lastClose * 0.00002) || 0.00002;
+  const macroTrend: TechnicalSnapshot['macroTrend'] =
+    macroDiff > macroThreshold
+      ? 'BULLISH'
+      : macroDiff < -macroThreshold
+      ? 'BEARISH'
+      : 'NEUTRAL';
+
+  const macroTrendBlockedDirection: TechnicalSnapshot['macroTrendBlockedDirection'] =
+    macroTrend === 'BEARISH'
+      ? 'CALL' // Bloqueia CALL se o preço estiver abaixo da EMA 200
+      : macroTrend === 'BULLISH'
+      ? 'PUT' // Bloqueia PUT se o preço estiver acima da EMA 200
+      : 'NONE';
 
   const rsi14 = rsiArr[lastIdx] ?? 50;
   const overbought = config?.rsiOverbought ?? 70;
@@ -258,6 +341,9 @@ export function computeTechnicalSnapshot(
   return {
     ema9,
     ema21,
+    ema200,
+    macroTrend,
+    macroTrendBlockedDirection,
     emaTrend,
     emaCrossover,
     rsi14,
@@ -347,6 +433,34 @@ export function evaluateMHIConfluence(
     closedCandles.length > 0 ? closedCandles : candles,
     config
   );
+
+  // 0. Filtro Avançado de Trend Global (Macro Tendência EMA 200)
+  if (config.useMacroTrendFilter !== false && rawDirection !== 'NEUTRAL') {
+    const macroPeriod = config.macroTrendPeriod || 200;
+    if (rawDirection === 'CALL') {
+      if (snap.macroTrend === 'BEARISH') {
+        blockReasons.push(
+          `Filtro de Trend Global: Preço abaixo da EMA ${macroPeriod} (Tendência Macro de Baixa). CALL bloqueado!`
+        );
+      } else if (snap.macroTrend === 'BULLISH') {
+        confluenceReasons.push(
+          `Macro Trend Alinhada: Preço acima da EMA ${macroPeriod} (Institucional de Alta)`
+        );
+        confidenceScore += 14;
+      }
+    } else if (rawDirection === 'PUT') {
+      if (snap.macroTrend === 'BULLISH') {
+        blockReasons.push(
+          `Filtro de Trend Global: Preço acima da EMA ${macroPeriod} (Tendência Macro de Alta). PUT bloqueado!`
+        );
+      } else if (snap.macroTrend === 'BEARISH') {
+        confluenceReasons.push(
+          `Macro Trend Alinhada: Preço abaixo da EMA ${macroPeriod} (Institucional de Baixa)`
+        );
+        confidenceScore += 14;
+      }
+    }
+  }
 
   // 1. EMA 9 / EMA 21
   if (rawDirection === 'CALL') {
@@ -515,6 +629,7 @@ export function catalogPairCandles(
   const closes = sorted.map((c) => c.close);
   const emaFast = calculateEMA(closes, config.emaFastPeriod || 9);
   const emaSlow = calculateEMA(closes, config.emaSlowPeriod || 21);
+  const emaMacro = calculateEMA(closes, config.macroTrendPeriod || 200);
   const rsiArr = calculateRSI(closes, config.rsiPeriod || 14);
 
   // Map candle timestamp -> index in sorted array
@@ -614,6 +729,25 @@ export function catalogPairCandles(
     const emaAligned =
       (direction === 'CALL' && fastVal > slowVal) ||
       (direction === 'PUT' && fastVal < slowVal);
+
+    // 0. Macro Trend Filter (EMA 200 Global)
+    if (config.useMacroTrendFilter) {
+      const macroVal = emaMacro[b3Idx] ?? sorted[b3Idx].close;
+      const isCallBlocked = direction === 'CALL' && sorted[b3Idx].close < macroVal;
+      const isPutBlocked = direction === 'PUT' && sorted[b3Idx].close > macroVal;
+      if (isCallBlocked || isPutBlocked) {
+        filteredByIndicatorsCount++;
+        recentQuadrants.push({
+          timestamp: entryTime,
+          formattedTime,
+          direction,
+          outcome: 'FILTERED_OUT',
+          emaAligned: false,
+          rsiValue: rsiVal,
+        });
+        continue;
+      }
+    }
 
     if (config.useEmaFilter && config.requireEmaAlignment && !emaAligned) {
       filteredByIndicatorsCount++;

@@ -31,6 +31,9 @@ export interface IQAsset {
 export interface TechnicalSnapshot {
   ema9: number;
   ema21: number;
+  ema200: number; // Institutional Macro EMA
+  macroTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  macroTrendBlockedDirection: 'CALL' | 'PUT' | 'NONE';
   emaTrend: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
   emaCrossover: 'GOLDEN_CROSS' | 'DEATH_CROSS' | 'NONE';
   rsi14: number;
@@ -71,6 +74,11 @@ export interface StrategyConfig {
   mhiMode: MHIMode;
   blockOnDoji: boolean;
   timeframe: TimeframeSeconds;
+  // Global Macro Trend Filter (e.g., EMA 200)
+  useMacroTrendFilter: boolean;
+  macroTrendPeriod: number; // e.g. 200, 100, 50
+  macroTrendTimeframe: 'CURRENT' | 'M5' | 'M15';
+  macroTrendRule: 'STRICT_BLOCK' | 'CONFLUENCE_SCORE';
   // Technical Confluence Filters
   useEmaFilter: boolean;
   emaFastPeriod: number;
