@@ -289,6 +289,18 @@ export default function App() {
   });
   const [newsEvents, setNewsEvents] = useState<EconomicNewsEvent[]>(INITIAL_NEWS);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [historyPage, setHistoryPage] = useState<number>(1);
+  const historyPageSize = 10;
+
+  const totalHistoryPages = Math.max(1, Math.ceil(orders.length / historyPageSize));
+  const paginatedOrders = useMemo(() => {
+    const startIndex = (historyPage - 1) * historyPageSize;
+    return orders.slice(startIndex, startIndex + historyPageSize);
+  }, [historyPage, orders]);
+
+  useEffect(() => {
+    setHistoryPage((currentPage) => Math.min(currentPage, totalHistoryPages));
+  }, [totalHistoryPages]);
 
   const lastAutoFiredBucketRef = useRef<number>(0);
   const lastPreSignalAudioBucketRef = useRef<number>(0);
@@ -2490,153 +2502,182 @@ export default function App() {
                       </p>
                     </div>
                   ) : (
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-800 bg-[#0B0F17]/80 text-[11px] text-slate-400">
-                          <th className="py-2.5 px-3">ID / Horário</th>
-                          <th className="py-2.5 px-3">Ativo</th>
-                          <th className="py-2.5 px-3">Estratégia / Etapa</th>
-                          <th className="py-2.5 px-3">Direção</th>
-                          <th className="py-2.5 px-3 text-right">Preço Entrada</th>
-                          <th className="py-2.5 px-3 text-right">Preço Fechamento</th>
-                          <th className="py-2.5 px-3 text-right">Lote</th>
-                          <th className="py-2.5 px-3 text-right">Resultado</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-800/70 font-mono tabular-nums">
-                        {orders.map((ord) => {
-                          const timeStr = new Date(
-                            ord.timestamp * 1000
-                          ).toLocaleTimeString('pt-BR', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            second: '2-digit',
-                          });
-                          return (
-                            <tr key={ord.id} className="h-10 hover:bg-slate-800/30">
-                              <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
-                                <div className="flex items-center gap-1.5">
-                                  {ord.brokerConfirmed ? (
-                                    <span
-                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
-                                      title={`Ordem confirmada pela IQ Option (ID: ${ord.iqOptionOrderId})`}
-                                    >
-                                      IQ #{ord.iqOptionOrderId}
+                    <>
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-800 bg-[#0B0F17]/80 text-[11px] text-slate-400">
+                            <th className="py-2.5 px-3">ID / Horário</th>
+                            <th className="py-2.5 px-3">Ativo</th>
+                            <th className="py-2.5 px-3">Estratégia / Etapa</th>
+                            <th className="py-2.5 px-3">Direção</th>
+                            <th className="py-2.5 px-3 text-right">Preço Entrada</th>
+                            <th className="py-2.5 px-3 text-right">Preço Fechamento</th>
+                            <th className="py-2.5 px-3 text-right">Lote</th>
+                            <th className="py-2.5 px-3 text-right">Resultado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/70 font-mono tabular-nums">
+                          {paginatedOrders.map((ord) => {
+                            const timeStr = new Date(
+                              ord.timestamp * 1000
+                            ).toLocaleTimeString('pt-BR', {
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                            });
+                            return (
+                              <tr key={ord.id} className="h-10 hover:bg-slate-800/30">
+                                <td className="py-2 px-3 text-slate-400 whitespace-nowrap">
+                                  <div className="flex items-center gap-1.5">
+                                    {ord.brokerConfirmed ? (
+                                      <span
+                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                                        title={`Ordem confirmada pela IQ Option (ID: ${ord.iqOptionOrderId})`}
+                                      >
+                                        IQ #{ord.iqOptionOrderId}
+                                      </span>
+                                    ) : ord.status === 'REJECTED' ? (
+                                      <span
+                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/30"
+                                        title={ord.brokerMessage || 'Recusada pela corretora'}
+                                      >
+                                        RECUSADA IQ
+                                      </span>
+                                    ) : (
+                                      <span
+                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30 animate-pulse"
+                                        title="Enviando à corretora..."
+                                      >
+                                        IQ #{ord.iqOptionOrderId || 'ENVIANDO'}
+                                      </span>
+                                    )}
+                                    <span className="text-slate-400 text-[11px]">· {timeStr}</span>
+                                  </div>
+                                </td>
+                                <td className="py-2 px-3 font-sans font-semibold text-white whitespace-nowrap">
+                                  {ord.assetTicker}
+                                </td>
+                                <td className="py-2 px-3 font-sans text-slate-300 whitespace-nowrap">
+                                  {ord.strategyLabel}{' '}
+                                  {ord.galeStep > 0
+                                    ? `(Gale ${ord.galeStep})`
+                                    : '(1ª Mão)'}
+                                </td>
+                                <td className="py-2 px-3 whitespace-nowrap">
+                                  <span
+                                    className={
+                                      ord.direction === 'CALL'
+                                        ? 'text-emerald-400 font-bold'
+                                        : 'text-red-400 font-bold'
+                                    }
+                                  >
+                                    {ord.direction}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-3 text-right whitespace-nowrap">
+                                  <span className="font-mono tabular-nums text-slate-200 font-semibold">
+                                    {formatOrderPrice(ord.openPrice, ord.assetTicker)}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-3 text-right whitespace-nowrap">
+                                  {ord.status === 'OPEN' ? (
+                                    <span className="font-mono tabular-nums text-blue-400 font-medium animate-pulse text-[11px]">
+                                      Cotação atual...
+                                    </span>
+                                  ) : ord.closePrice != null ? (
+                                    <div className="inline-flex flex-col items-end">
+                                      <span
+                                        className={`font-mono tabular-nums font-bold ${
+                                          ord.status === 'WIN'
+                                            ? 'text-emerald-400'
+                                            : ord.status === 'LOSS'
+                                            ? 'text-red-400'
+                                            : 'text-slate-300'
+                                        }`}
+                                      >
+                                        {formatOrderPrice(ord.closePrice, ord.assetTicker)}
+                                      </span>
+                                      {ord.openPrice != null &&
+                                        ord.closePrice != null &&
+                                        Math.abs(ord.closePrice - ord.openPrice) > 0.000001 && (
+                                          <span
+                                            className={`text-[9.5px] font-mono tabular-nums font-semibold ${
+                                              ord.closePrice > ord.openPrice
+                                                ? 'text-emerald-400'
+                                                : 'text-red-400'
+                                            }`}
+                                          >
+                                            {ord.closePrice > ord.openPrice ? '▲ +' : '▼ '}
+                                            {Math.abs(ord.closePrice - ord.openPrice).toFixed(
+                                              ord.openPrice > 50 ? 3 : 5
+                                            )}
+                                          </span>
+                                        )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-500">—</span>
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 text-right text-white">
+                                  R$ {ord.amount.toFixed(2)}
+                                </td>
+                                <td className="py-2 px-3 text-right font-bold whitespace-nowrap">
+                                  {ord.status === 'OPEN' ? (
+                                    <span className="text-blue-400">EM ABERTO...</span>
+                                  ) : ord.status === 'WIN' ? (
+                                    <span className="text-emerald-400">
+                                      WIN (+R$ {ord.profit.toFixed(2)})
+                                    </span>
+                                  ) : ord.status === 'EQUAL' ? (
+                                    <span className="text-slate-400">
+                                      EMPATE (R$ 0,00)
                                     </span>
                                   ) : ord.status === 'REJECTED' ? (
                                     <span
-                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/30"
-                                      title={ord.brokerMessage || 'Recusada pela corretora'}
+                                      className="text-amber-400 text-[11px]"
+                                      title={ord.brokerMessage || 'Ordem recusada pela corretora'}
                                     >
-                                      RECUSADA IQ
+                                      RECUSADA ({ord.brokerMessage ? ord.brokerMessage.substring(0, 22) : 'IQ Bloqueou'})
                                     </span>
                                   ) : (
-                                    <span
-                                      className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30 animate-pulse"
-                                      title="Enviando à corretora..."
-                                    >
-                                      IQ #{ord.iqOptionOrderId || 'ENVIANDO'}
+                                    <span className="text-red-400">
+                                      LOSS (-R$ {Math.abs(ord.profit).toFixed(2)})
                                     </span>
                                   )}
-                                  <span className="text-slate-400 text-[11px]">· {timeStr}</span>
-                                </div>
-                              </td>
-                              <td className="py-2 px-3 font-sans font-semibold text-white whitespace-nowrap">
-                                {ord.assetTicker}
-                              </td>
-                              <td className="py-2 px-3 font-sans text-slate-300 whitespace-nowrap">
-                                {ord.strategyLabel}{' '}
-                                {ord.galeStep > 0
-                                  ? `(Gale ${ord.galeStep})`
-                                  : '(1ª Mão)'}
-                              </td>
-                              <td className="py-2 px-3 whitespace-nowrap">
-                                <span
-                                  className={
-                                    ord.direction === 'CALL'
-                                      ? 'text-emerald-400 font-bold'
-                                      : 'text-red-400 font-bold'
-                                  }
-                                >
-                                  {ord.direction}
-                                </span>
-                              </td>
-                              <td className="py-2 px-3 text-right whitespace-nowrap">
-                                <span className="font-mono tabular-nums text-slate-200 font-semibold">
-                                  {formatOrderPrice(ord.openPrice, ord.assetTicker)}
-                                </span>
-                              </td>
-                              <td className="py-2 px-3 text-right whitespace-nowrap">
-                                {ord.status === 'OPEN' ? (
-                                  <span className="font-mono tabular-nums text-blue-400 font-medium animate-pulse text-[11px]">
-                                    Cotação atual...
-                                  </span>
-                                ) : ord.closePrice != null ? (
-                                  <div className="inline-flex flex-col items-end">
-                                    <span
-                                      className={`font-mono tabular-nums font-bold ${
-                                        ord.status === 'WIN'
-                                          ? 'text-emerald-400'
-                                          : ord.status === 'LOSS'
-                                          ? 'text-red-400'
-                                          : 'text-slate-300'
-                                      }`}
-                                    >
-                                      {formatOrderPrice(ord.closePrice, ord.assetTicker)}
-                                    </span>
-                                    {ord.openPrice != null &&
-                                      ord.closePrice != null &&
-                                      Math.abs(ord.closePrice - ord.openPrice) > 0.000001 && (
-                                        <span
-                                          className={`text-[9.5px] font-mono tabular-nums font-semibold ${
-                                            ord.closePrice > ord.openPrice
-                                              ? 'text-emerald-400'
-                                              : 'text-red-400'
-                                          }`}
-                                        >
-                                          {ord.closePrice > ord.openPrice ? '▲ +' : '▼ '}
-                                          {Math.abs(ord.closePrice - ord.openPrice).toFixed(
-                                            ord.openPrice > 50 ? 3 : 5
-                                          )}
-                                        </span>
-                                      )}
-                                  </div>
-                                ) : (
-                                  <span className="text-slate-500">—</span>
-                                )}
-                              </td>
-                              <td className="py-2 px-3 text-right text-white">
-                                R$ {ord.amount.toFixed(2)}
-                              </td>
-                              <td className="py-2 px-3 text-right font-bold whitespace-nowrap">
-                                {ord.status === 'OPEN' ? (
-                                  <span className="text-blue-400">EM ABERTO...</span>
-                                ) : ord.status === 'WIN' ? (
-                                  <span className="text-emerald-400">
-                                    WIN (+R$ {ord.profit.toFixed(2)})
-                                  </span>
-                                ) : ord.status === 'EQUAL' ? (
-                                  <span className="text-slate-400">
-                                    EMPATE (R$ 0,00)
-                                  </span>
-                                ) : ord.status === 'REJECTED' ? (
-                                  <span
-                                    className="text-amber-400 text-[11px]"
-                                    title={ord.brokerMessage || 'Ordem recusada pela corretora'}
-                                  >
-                                    RECUSADA ({ord.brokerMessage ? ord.brokerMessage.substring(0, 22) : 'IQ Bloqueou'})
-                                  </span>
-                                ) : (
-                                  <span className="text-red-400">
-                                    LOSS (-R$ {Math.abs(ord.profit).toFixed(2)})
-                                  </span>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+
+                      {orders.length > historyPageSize && (
+                        <div className="flex flex-col gap-2 border-t border-slate-800 bg-[#0B0F17]/80 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="text-[11px] text-slate-400">
+                            Página {historyPage} de {totalHistoryPages}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}
+                              disabled={historyPage === 1}
+                              className="px-2.5 py-1 rounded border border-slate-700 bg-slate-900 text-[11px] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:border-slate-500 hover:text-white transition-colors"
+                            >
+                              Anterior
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setHistoryPage((page) => Math.min(totalHistoryPages, page + 1))}
+                              disabled={historyPage >= totalHistoryPages}
+                              className="px-2.5 py-1 rounded border border-slate-700 bg-slate-900 text-[11px] text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:border-slate-500 hover:text-white transition-colors"
+                            >
+                              Próxima
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
