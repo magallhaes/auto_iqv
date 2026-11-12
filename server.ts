@@ -6,7 +6,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
-import { computeTechnicalSnapshot } from './src/utils/indicators';
+import { computeTechnicalSnapshot, evaluateMHIConfluence } from './src/utils/indicators';
+import type { StrategyConfig } from './src/types/trading';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -85,9 +86,25 @@ interface ServerBotState {
     sorosLevels: number;
     sorosPayoutReinvestPercent: number;
     instrumentType: 'binary' | 'digital';
+    maxConsecutiveLosses?: number;
+    trailingStopWinEnabled?: boolean;
+    trailingStopWinActivationPercent?: number;
+    trailingStopWinGivebackPercent?: number;
+    minPayoutFilter?: number;
+    operatingHoursEnabled?: boolean;
+    operatingHoursStart?: string;
+    operatingHoursEnd?: string;
   };
   strategyConfig: {
-    mhiVariant: 'MHI_1' | 'MHI_2' | 'MHI_3';
+    mhiVariant:
+      | 'MHI_1'
+      | 'MHI_2'
+      | 'MHI_3'
+      | 'MILHAO'
+      | 'TORRES_GEMEAS'
+      | 'PADRAO_23'
+      | 'TRES_MOSQUETEIROS'
+      | 'AUTO_BEST';
     mhiMode: 'MINORIA' | 'MAIORIA';
     blockOnDoji: boolean;
     timeframe: 60 | 300;
@@ -111,6 +128,13 @@ interface ServerBotState {
     useMacdFilter?: boolean;
     useSrFilter?: boolean;
     usePriceActionFilter?: boolean;
+    useAtrFilter?: boolean;
+    atrPeriod?: number;
+    atrMinPercent?: number;
+    atrMaxPercent?: number;
+    atrBlockMode?: 'OUTSIDE_RANGE' | 'HIGH_ONLY' | 'LOW_ONLY';
+    useSentimentFilter?: boolean;
+    sentimentThreshold?: number;
   };
   signalListConfig: {
     enabled: boolean;
@@ -124,6 +148,9 @@ interface ServerBotState {
   scheduledSignals: ServerScheduledSignal[];
   riskState: {
     sessionProfit: number;
+    peakSessionProfit?: number;
+    consecutiveLosses?: number;
+    consecutiveWins?: number;
     totalWins: number;
     totalLosses: number;
     currentGaleStep: 0 | 1 | 2;
@@ -133,6 +160,8 @@ interface ServerBotState {
     nextCalculatedStake: number;
     stopWinReached: boolean;
     stopLossReached: boolean;
+    maxConsecutiveLossesReached?: boolean;
+    trailingStopWinTriggered?: boolean;
   };
 }
 
@@ -160,7 +189,19 @@ function loadBotStateFromDisk(): ServerBotState {
   try {
     if (fs.existsSync(BOT_STATE_FILE_PATH)) {
       const data = JSON.parse(fs.readFileSync(BOT_STATE_FILE_PATH, 'utf-8'));
-      if (data && typeof data.isRunning === 'boolean') return data;
+      if (data && typeof data.isRunning === 'boolean') {
+        data.strategyConfig = {
+          useSentimentFilter: true,
+          sentimentThreshold: 55,
+          useAtrFilter: true,
+          atrPeriod: 14,
+          atrMinPercent: 0.015,
+          atrMaxPercent: 0.12,
+          atrBlockMode: 'OUTSIDE_RANGE',
+          ...(data.strategyConfig || {}),
+        };
+        return data;
+      }
     }
   } catch {
     // ignore
@@ -191,6 +232,13 @@ function loadBotStateFromDisk(): ServerBotState {
       macroTrendPeriod: 200,
       macroTrendTimeframe: 'CURRENT',
       macroTrendRule: 'STRICT_BLOCK',
+      useAtrFilter: false,
+      atrPeriod: 14,
+      atrMinPercent: 0.015,
+      atrMaxPercent: 0.12,
+      atrBlockMode: 'OUTSIDE_RANGE',
+      useSentimentFilter: true,
+      sentimentThreshold: 55,
     },
     signalListConfig: {
       enabled: true,
@@ -550,6 +598,7 @@ class IQOptionBridge {
   private telegramAlertSignals = true;
   private telegramAlertOrderResults = true;
   private lastServerMhiTrigger = 0;
+  private lastServerMhiTriggers = new Set<string>();
   public iqSocket: WebSocket | null = null;
   private reqCounter = 1;
   private browserClients = new Set<WebSocket>();
@@ -888,6 +937,118 @@ class IQOptionBridge {
       order.brokerMessage || '',
     ].filter(Boolean).join('\n');
     void this.sendTelegramMessage(message);
+  }
+
+  private notifyTelegramStopTarget(
+    target: 'STOP_WIN' | 'STOP_LOSS' | 'TRAILING_STOP' | 'MAX_CONSECUTIVE_LOSSES',
+    profit: number,
+    limit: number
+  ) {
+    if (!this.telegramEnabled) return;
+    let header = '🏆 QuantIQ | META DE LUCRO BATIDA (STOP WIN)!';
+    let detail = `🎉 Parabéns! A meta estabelecida de +${this.currency} ${limit.toFixed(2)} foi alcançada com sucesso.`;
+
+    if (target === 'STOP_LOSS') {
+      header = '🛑 QuantIQ | LIMITE DE STOP LOSS ATINGIDO!';
+      detail = `⚠️ O limite de segurança de -${this.currency} ${limit.toFixed(2)} foi atingido. O robô foi pausado para proteger seu capital.`;
+    } else if (target === 'TRAILING_STOP') {
+      header = '🛡️ QuantIQ | TRAILING STOP WIN PROTEGIDO!';
+      detail = `💰 O lucro atingiu pico de +${this.currency} ${(this.botState.riskState.peakSessionProfit || profit).toFixed(2)} e foi travado com segurança acima de +${this.currency} ${limit.toFixed(2)}.`;
+    } else if (target === 'MAX_CONSECUTIVE_LOSSES') {
+      header = '🛑 QuantIQ | LIMITE DE LOSS CONSECUTIVO ATINGIDO!';
+      detail = `⚠️ O robô atingiu ${this.botState.riskState.consecutiveLosses || limit} ciclos seguidos de LOSS. Operações pausadas preventivamente para evitar drawdowns.`;
+    }
+
+    const message = [
+      header,
+      detail,
+      `💰 Resultado da Sessão: ${profit >= 0 ? '+' : '-'}${this.currency} ${Math.abs(profit).toFixed(2)}`,
+      `📊 Placar: ${this.botState.riskState.totalWins} WINs / ${this.botState.riskState.totalLosses} LOSSes (Sequência: ${this.botState.riskState.consecutiveWins || 0}W / ${this.botState.riskState.consecutiveLosses || 0}L)`,
+      `🕒 Brasília: ${this.formatTelegramTimestamp(Date.now())}`,
+      '🔒 Robô Operador 24/7 pausado automaticamente.',
+    ].join('\n');
+    void this.sendTelegramMessage(message);
+  }
+
+  private updateRiskSession(
+    netProfit: number,
+    isWin: boolean,
+    isEqual: boolean,
+    isEndOfCycleLoss: boolean
+  ) {
+    this.botState.riskState.sessionProfit = Number(
+      (this.botState.riskState.sessionProfit + netProfit).toFixed(2)
+    );
+    const currentProfit = this.botState.riskState.sessionProfit;
+
+    if (this.botState.riskState.peakSessionProfit === undefined) {
+      this.botState.riskState.peakSessionProfit = 0;
+    }
+    if (currentProfit > this.botState.riskState.peakSessionProfit) {
+      this.botState.riskState.peakSessionProfit = currentProfit;
+    }
+
+    if (isWin) {
+      this.botState.riskState.totalWins += 1;
+      this.botState.riskState.consecutiveWins = (this.botState.riskState.consecutiveWins || 0) + 1;
+      this.botState.riskState.consecutiveLosses = 0;
+    } else if (isEndOfCycleLoss) {
+      this.botState.riskState.totalLosses += 1;
+      this.botState.riskState.consecutiveLosses = (this.botState.riskState.consecutiveLosses || 0) + 1;
+      this.botState.riskState.consecutiveWins = 0;
+    }
+
+    // 1. Stop Win Check
+    if (currentProfit >= this.botState.riskConfig.stopWin) {
+      this.botState.riskState.stopWinReached = true;
+      this.botState.isRunning = false;
+      this.notifyTelegramStopTarget('STOP_WIN', currentProfit, this.botState.riskConfig.stopWin);
+      return;
+    }
+
+    // 2. Stop Loss Check
+    if (currentProfit <= -this.botState.riskConfig.stopLoss) {
+      this.botState.riskState.stopLossReached = true;
+      this.botState.isRunning = false;
+      this.notifyTelegramStopTarget('STOP_LOSS', currentProfit, this.botState.riskConfig.stopLoss);
+      return;
+    }
+
+    // 3. Trailing Stop Win Check
+    if (
+      this.botState.riskConfig.trailingStopWinEnabled &&
+      (this.botState.riskState.peakSessionProfit || 0) > 0
+    ) {
+      const peak = this.botState.riskState.peakSessionProfit || 0;
+      const activationPct = this.botState.riskConfig.trailingStopWinActivationPercent ?? 60;
+      const givebackPct = this.botState.riskConfig.trailingStopWinGivebackPercent ?? 25;
+      const activationThreshold = this.botState.riskConfig.stopWin * (activationPct / 100);
+
+      if (peak >= activationThreshold) {
+        const allowedGiveback = peak * (givebackPct / 100);
+        const trailingFloor = peak - allowedGiveback;
+        if (currentProfit <= trailingFloor) {
+          this.botState.riskState.trailingStopWinTriggered = true;
+          this.botState.isRunning = false;
+          this.notifyTelegramStopTarget('TRAILING_STOP', currentProfit, trailingFloor);
+          return;
+        }
+      }
+    }
+
+    // 4. Max Consecutive Losses Check
+    const maxLosses = this.botState.riskConfig.maxConsecutiveLosses;
+    if (
+      this.botState.isRunning &&
+      maxLosses &&
+      maxLosses > 0 &&
+      (this.botState.riskState.consecutiveLosses || 0) >= maxLosses
+    ) {
+      this.botState.riskState.maxConsecutiveLossesReached = true;
+      this.botState.isRunning = false;
+      this.notifyTelegramStopTarget('MAX_CONSECUTIVE_LOSSES', currentProfit, maxLosses);
+      return;
+    }
   }
 
   private nextRequestId(prefix = 'quantiq'): string {
@@ -2128,20 +2289,11 @@ class IQOptionBridge {
       );
 
       // Update session risk stats
-      this.botState.riskState.sessionProfit = Number(
-        (this.botState.riskState.sessionProfit + netProfit).toFixed(2)
-      );
-      if (isWin) this.botState.riskState.totalWins += 1;
-      else if (!isEqual) this.botState.riskState.totalLosses += 1;
-
-      // Stop Win / Stop Loss check
-      if (this.botState.riskState.sessionProfit >= this.botState.riskConfig.stopWin) {
-        this.botState.riskState.stopWinReached = true;
-        this.botState.isRunning = false;
-      } else if (this.botState.riskState.sessionProfit <= -this.botState.riskConfig.stopLoss) {
-        this.botState.riskState.stopLossReached = true;
-        this.botState.isRunning = false;
-      }
+      const maxGales = order.signalId
+        ? this.botState.signalListConfig.maxGales
+        : this.botState.riskConfig.maxGales;
+      const isEndOfCycleLoss = !isWin && !isEqual && order.galeStep >= maxGales;
+      this.updateRiskSession(netProfit, isWin, isEqual, isEndOfCycleLoss);
 
       // CRITICAL: Gale & Martingale State Handling
       if (isWin) {
@@ -2287,11 +2439,11 @@ class IQOptionBridge {
       order.profit = netProfit;
       this.notifyTelegramOrderResult(order);
 
-      this.botState.riskState.sessionProfit = Number(
-        (this.botState.riskState.sessionProfit + netProfit).toFixed(2)
-      );
-      if (isWin) this.botState.riskState.totalWins += 1;
-      else if (!isEqual) this.botState.riskState.totalLosses += 1;
+      const maxGales = order.signalId
+        ? this.botState.signalListConfig.maxGales
+        : this.botState.riskConfig.maxGales;
+      const isEndOfCycleLoss = !isWin && !isEqual && order.galeStep >= maxGales;
+      this.updateRiskSession(netProfit, isWin, isEqual, isEndOfCycleLoss);
 
       if (isWin) {
         this.botState.riskState.currentGaleStep = 0;
@@ -2495,22 +2647,65 @@ class IQOptionBridge {
       if (!opposingPattern) count += 1;
     }
 
+    if (config.useAtrFilter && snapshot.atrStatus === 'NORMAL') {
+      count += 1;
+    }
+
+    if (config.useSentimentFilter) {
+      const threshold = config.sentimentThreshold ?? 55;
+      if (
+        (direction === 'CALL' && snapshot.marketSentiment.bullPower >= threshold) ||
+        (direction === 'PUT' && snapshot.marketSentiment.bearPower >= threshold)
+      ) {
+        count += 1;
+      }
+    }
+
     return count;
   }
 
   public runBackgroundBot(nowSec: number) {
     if (!this.botState.isRunning) return;
-    if (this.botState.riskState.stopWinReached || this.botState.riskState.stopLossReached) return;
+    if (
+      this.botState.riskState.stopWinReached ||
+      this.botState.riskState.stopLossReached ||
+      this.botState.riskState.trailingStopWinTriggered ||
+      this.botState.riskState.maxConsecutiveLossesReached
+    ) {
+      return;
+    }
+
+    // Operating Hours Filter
+    if (this.botState.riskConfig.operatingHoursEnabled) {
+      const now = new Date();
+      const spTime = now.toLocaleTimeString('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+      const start = this.botState.riskConfig.operatingHoursStart || '06:00';
+      const end = this.botState.riskConfig.operatingHoursEnd || '22:00';
+      if (spTime < start || spTime > end) {
+        return;
+      }
+    }
 
     // Keep at most one open position or Gale sequence at a time.
     if (this.ordersStore.some((order) => order.status === 'OPEN')) return;
 
     const candidates: BotSignalCandidate[] = [];
     let botStateChanged = false;
+    const minPayoutFilter = this.botState.riskConfig.minPayoutFilter ?? 80;
 
     if (this.botState.botMode === 'SIGNAL_LIST' || this.botState.botMode === 'BOTH') {
       for (const signal of this.botState.scheduledSignals) {
         if (!signal.enabled || (signal.status !== 'PENDING' && signal.status !== 'PRE_SIGNAL')) {
+          continue;
+        }
+
+        const resolved = this.resolveActive(signal.assetId, signal.ticker);
+        if (resolved.payout < minPayoutFilter) {
           continue;
         }
 
@@ -2548,7 +2743,6 @@ class IQOptionBridge {
           }
         }
 
-        const resolved = this.resolveActive(signal.assetId, signal.ticker);
         candidates.push({
           source: 'SIGNAL_LIST',
           assetId: signal.assetId,
@@ -2566,68 +2760,62 @@ class IQOptionBridge {
 
     if (this.botState.botMode === 'STRATEGY' || this.botState.botMode === 'BOTH') {
       const timeframe = this.botState.strategyConfig.timeframe || 60;
-      const quadrantSeconds = timeframe * 5;
-      const variantOffset =
-        this.botState.strategyConfig.mhiVariant === 'MHI_1'
-          ? 0
-          : this.botState.strategyConfig.mhiVariant === 'MHI_2'
-          ? 1
-          : 2;
-      const currentQuadrantStart = Math.floor(nowSec / quadrantSeconds) * quadrantSeconds;
-      let targetCandleStart = currentQuadrantStart + variantOffset * timeframe;
-      if (nowSec >= targetCandleStart + timeframe) {
-        targetCandleStart = currentQuadrantStart + quadrantSeconds + variantOffset * timeframe;
-      }
-
       const advance =
         this.botState.strategyConfig.entryTimingSecond === 0
           ? 0
           : 60 - this.botState.strategyConfig.entryTimingSecond;
-      const triggerTime = targetCandleStart - advance;
-      const isTriggerWindow = nowSec >= triggerTime && nowSec <= triggerTime + 2;
 
-      if (isTriggerWindow && this.lastServerMhiTrigger !== targetCandleStart) {
-        this.lastServerMhiTrigger = targetCandleStart;
-        for (const assetId of this.botState.selectedBotAssetIds) {
-          const asset = this.catalogAssets.find((item) => item.id === assetId);
-          if (!asset) continue;
+      for (const assetId of this.botState.selectedBotAssetIds) {
+        const asset = this.catalogAssets.find((item) => item.id === assetId);
+        if (!asset) continue;
 
-          const candles = candleStore.get(getStoreKey(assetId, timeframe)) || [];
-          if (candles.length < 5) continue;
+        const resolved = this.resolveActive(assetId, asset.ticker);
+        if (resolved.payout < minPayoutFilter) {
+          continue;
+        }
 
-          const base = candles.slice(-3);
-          const greens = base.filter((candle) => candle.close > candle.open).length;
-          const reds = base.filter((candle) => candle.close < candle.open).length;
-          if (greens === reds) continue;
+        const candles = candleStore.get(getStoreKey(assetId, timeframe)) || [];
+        if (candles.length < 5) continue;
 
-          const minorityGreen = greens < reds;
-          const targetColor =
-            this.botState.strategyConfig.mhiMode === 'MINORIA'
-              ? minorityGreen ? 'GREEN' : 'RED'
-              : minorityGreen ? 'RED' : 'GREEN';
-          const direction: 'CALL' | 'PUT' = targetColor === 'GREEN' ? 'CALL' : 'PUT';
-          const snapshot = computeTechnicalSnapshot(candles, this.botState.strategyConfig);
+        const analysis = evaluateMHIConfluence(
+          candles,
+          this.botState.strategyConfig as unknown as StrategyConfig,
+          [],
+          asset.ticker,
+          nowSec
+        );
 
-          if (
-            this.botState.strategyConfig.useMacroTrendFilter !== false &&
-            ((direction === 'CALL' && snapshot.macroTrend === 'BEARISH') ||
-              (direction === 'PUT' && snapshot.macroTrend === 'BULLISH'))
-          ) {
-            console.log(`[MHI Bot] ${asset.ticker} ${direction} bloqueado pelo Filtro de Trend Global`);
-            continue;
+        // Entry timing window check
+        const isTriggerWindow =
+          analysis.secondsUntilNextEntry <= advance && analysis.secondsUntilNextEntry >= 0;
+        if (!isTriggerWindow) continue;
+
+        const triggerKey = `${assetId}_${analysis.nextEntryTime}`;
+        if (this.lastServerMhiTriggers.has(triggerKey)) continue;
+
+        if (analysis.finalDirection === 'CALL' || analysis.finalDirection === 'PUT') {
+          this.lastServerMhiTriggers.add(triggerKey);
+          if (this.lastServerMhiTriggers.size > 300) {
+            this.lastServerMhiTriggers.clear();
           }
 
-          const resolved = this.resolveActive(assetId, asset.ticker);
+          const strategyLabel =
+            this.botState.strategyConfig.mhiVariant === 'AUTO_BEST'
+              ? (analysis.confluenceReasons[0] || 'Auto Melhor')
+              : `${this.botState.strategyConfig.mhiVariant.replace('_', ' ')} (${this.botState.strategyConfig.mhiMode})`;
+
           candidates.push({
             source: 'STRATEGY',
             assetId,
             ticker: asset.ticker,
-            direction,
+            direction: analysis.finalDirection,
             timeframe,
             payout: resolved.payout,
-            confluenceCount: this.getTechnicalConfluenceCount(candles, direction, true),
+            confluenceCount:
+              this.getTechnicalConfluenceCount(candles, analysis.finalDirection, true) +
+              (analysis.confidenceScore >= 80 ? 2 : 0),
             historicalScore: this.computeAssetScore(assetId, timeframe),
-            strategyLabel: `${this.botState.strategyConfig.mhiVariant} ${this.botState.strategyConfig.mhiMode}`,
+            strategyLabel,
           });
         }
       }

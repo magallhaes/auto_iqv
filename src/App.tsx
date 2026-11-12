@@ -33,6 +33,7 @@ import { ConnectModal } from './components/ConnectModal';
 import { DailyPerformanceDashboard } from './components/DailyPerformanceDashboard';
 import { LoginScreen } from './components/LoginScreen';
 import {
+  Activity,
   ArrowDownRight,
   ArrowUpRight,
   BarChart3,
@@ -63,6 +64,7 @@ import {
   ChevronDown,
   ChevronUp,
   Send,
+  ShieldAlert,
 } from 'lucide-react';
 import { playTradingAudio } from './utils/sound';
 
@@ -239,6 +241,15 @@ export default function App() {
     useMacdFilter: false,
     useSrFilter: true,
     usePriceActionFilter: true,
+    // Filtro de Volatilidade ATR (Average True Range)
+    useAtrFilter: true,
+    atrPeriod: 14,
+    atrMinPercent: 0.015,
+    atrMaxPercent: 0.12,
+    atrBlockMode: 'OUTSIDE_RANGE',
+    // Filtro de Sentimento de Mercado & Força de Volume (Bull/Bear Power)
+    useSentimentFilter: true,
+    sentimentThreshold: 55,
     useNewsFilter: true,
     minBullsToBlock: 3,
     pauseMinutesBeforeNews: 15,
@@ -836,12 +847,21 @@ export default function App() {
   const handleToggleBot = async () => {
     const nextRunning = !isBotRunning;
     let nextRiskState = riskState;
-    if (nextRunning && (riskState.stopWinReached || riskState.stopLossReached)) {
+    if (
+      nextRunning &&
+      (riskState.stopWinReached ||
+        riskState.stopLossReached ||
+        riskState.trailingStopWinTriggered ||
+        riskState.maxConsecutiveLossesReached)
+    ) {
       nextRiskState = {
         ...riskState,
         sessionProfit: 0,
         stopWinReached: false,
         stopLossReached: false,
+        trailingStopWinTriggered: false,
+        maxConsecutiveLossesReached: false,
+        consecutiveLosses: 0,
       };
       setRiskState(nextRiskState);
     }
@@ -1453,6 +1473,10 @@ export default function App() {
               className={`w-full md:w-auto flex items-center justify-center gap-2 px-4 py-2 md:py-1.5 rounded-lg text-xs font-bold transition-all duration-200 ease-out whitespace-nowrap cursor-pointer active:scale-95 ${
                 isBotRunning
                   ? 'bg-red-600 hover:bg-red-500 text-white shadow-md shadow-red-500/25 animate-pulse'
+                  : riskState.stopWinReached || riskState.trailingStopWinTriggered
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-500/35 ring-2 ring-emerald-400/40'
+                  : riskState.stopLossReached || riskState.maxConsecutiveLossesReached
+                  ? 'bg-rose-700 hover:bg-rose-600 text-white shadow-md shadow-rose-500/35 ring-2 ring-rose-400/40'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-500/25'
               }`}
             >
@@ -1460,6 +1484,26 @@ export default function App() {
                 <>
                   <Pause className="w-4 h-4 shrink-0" />
                   <span>Pausar Robô 24/7</span>
+                </>
+              ) : riskState.stopWinReached ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-200 animate-bounce" />
+                  <span>🏆 Meta Batida (+R$ {riskState.sessionProfit.toFixed(2)}) — Iniciar Novo Ciclo</span>
+                </>
+              ) : riskState.trailingStopWinTriggered ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-200 animate-bounce" />
+                  <span>🛡️ Trailing Stop Salvo (+R$ {riskState.sessionProfit.toFixed(2)}) — Novo Ciclo</span>
+                </>
+              ) : riskState.maxConsecutiveLossesReached ? (
+                <>
+                  <ShieldAlert className="w-4 h-4 shrink-0 text-amber-200 animate-pulse" />
+                  <span>🛑 Trava de Losses Consecutivos ({riskState.consecutiveLosses || 2}x) — Destravar</span>
+                </>
+              ) : riskState.stopLossReached ? (
+                <>
+                  <ShieldAlert className="w-4 h-4 shrink-0 text-rose-200 animate-pulse" />
+                  <span>🛑 Stop Loss Atingido (-R$ {Math.abs(riskState.sessionProfit).toFixed(2)}) — Resetar</span>
                 </>
               ) : (
                 <>
@@ -1470,6 +1514,136 @@ export default function App() {
             </button>
           </div>
         </div>
+
+        {/* Stop Win / Stop Loss Global Banner */}
+        {riskState.stopWinReached && (
+          <div className="max-w-[1440px] mx-auto mt-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-emerald-200 bg-emerald-950/80 border border-emerald-500/60 p-3 rounded-lg shadow-lg shadow-emerald-950/40">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>
+                  <strong>🎉 Meta de Stop Win Batida com Sucesso!</strong> Lucro acumulado da sessão:{' '}
+                  <strong className="text-emerald-300 font-mono">
+                    +R$ {riskState.sessionProfit.toFixed(2)}
+                  </strong>{' '}
+                  (Meta: R$ {riskConfig.stopWin.toFixed(2)}). O robô foi pausado automaticamente para proteger seu capital.
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setRiskState((prev) => ({
+                    ...prev,
+                    sessionProfit: 0,
+                    stopWinReached: false,
+                    stopLossReached: false,
+                  }));
+                  showToast('Placar da sessão zerado para novo ciclo.');
+                }}
+                className="self-end sm:self-auto px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-bold cursor-pointer transition-colors shrink-0"
+              >
+                Zerar & Iniciar Novo Ciclo
+              </button>
+            </div>
+          </div>
+        )}
+
+        {riskState.stopLossReached && (
+          <div className="max-w-[1440px] mx-auto mt-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-rose-200 bg-rose-950/80 border border-rose-500/60 p-3 rounded-lg shadow-lg shadow-rose-950/40">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>
+                  <strong>🛑 Limite de Stop Loss Atingido!</strong> Perda contida em:{' '}
+                  <strong className="text-rose-300 font-mono">
+                    -R$ {Math.abs(riskState.sessionProfit).toFixed(2)}
+                  </strong>{' '}
+                  (Limite: R$ {riskConfig.stopLoss.toFixed(2)}). O robô foi travado para proteger sua banca.
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setRiskState((prev) => ({
+                    ...prev,
+                    sessionProfit: 0,
+                    stopWinReached: false,
+                    stopLossReached: false,
+                    trailingStopWinTriggered: false,
+                    maxConsecutiveLossesReached: false,
+                  }));
+                  showToast('Sessão resetada.');
+                }}
+                className="self-end sm:self-auto px-3 py-1 bg-rose-700 hover:bg-rose-600 text-white rounded text-[11px] font-bold cursor-pointer transition-colors shrink-0"
+              >
+                Resetar Sessão
+              </button>
+            </div>
+          </div>
+        )}
+
+        {riskState.trailingStopWinTriggered && (
+          <div className="max-w-[1440px] mx-auto mt-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-emerald-200 bg-emerald-950/80 border border-emerald-500/60 p-3 rounded-lg shadow-lg shadow-emerald-950/40">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>
+                  <strong>🛡️ Trailing Stop Win Protegido!</strong> O lucro bateu pico de{' '}
+                  <strong className="text-emerald-300 font-mono">
+                    +R$ {(riskState.peakSessionProfit || riskState.sessionProfit).toFixed(2)}
+                  </strong>{' '}
+                  e o robô encerrou garantindo{' '}
+                  <strong className="text-emerald-300 font-mono">
+                    +R$ {riskState.sessionProfit.toFixed(2)}
+                  </strong>{' '}
+                  no bolso antes que o mercado devolvesse mais!
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setRiskState((prev) => ({
+                    ...prev,
+                    sessionProfit: 0,
+                    stopWinReached: false,
+                    stopLossReached: false,
+                    trailingStopWinTriggered: false,
+                    maxConsecutiveLossesReached: false,
+                  }));
+                  showToast('Sessão resetada.');
+                }}
+                className="self-end sm:self-auto px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-bold cursor-pointer transition-colors shrink-0"
+              >
+                Iniciar Novo Ciclo
+              </button>
+            </div>
+          </div>
+        )}
+
+        {riskState.maxConsecutiveLossesReached && (
+          <div className="max-w-[1440px] mx-auto mt-2.5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs text-amber-200 bg-amber-950/80 border border-amber-500/60 p-3 rounded-lg shadow-lg shadow-amber-950/40">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>
+                  <strong>🛑 Limite de Losses Consecutivos Atingido!</strong> O robô foi pausado após{' '}
+                  <strong>{riskState.consecutiveLosses || riskConfig.maxConsecutiveLosses || 2}</strong>{' '}
+                  ciclos seguidos de loss para proteger sua banca contra tendências hostis.
+                </span>
+              </div>
+              <button
+                onClick={() => {
+                  setRiskState((prev) => ({
+                    ...prev,
+                    consecutiveLosses: 0,
+                    maxConsecutiveLossesReached: false,
+                  }));
+                  showToast('Trava de perdas consecutivas liberada.');
+                }}
+                className="self-end sm:self-auto px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded text-[11px] font-bold cursor-pointer transition-colors shrink-0"
+              >
+                Liberar Trava
+              </button>
+            </div>
+          </div>
+        )}
 
         {toastMessage && (
           <div className="max-w-[1440px] mx-auto mt-2">
@@ -1908,6 +2082,135 @@ export default function App() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
               {/* Left 8 Columns: Live Chart + Technical Indicators Bar */}
               <div className="lg:col-span-8 flex flex-col justify-between space-y-4">
+                {/* Cockpit Pro do Robô Operador (Live Telemetry & Proteções) */}
+                <div className="bg-[#111827] border border-slate-800 rounded-lg px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2.5 shadow-sm">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-bold uppercase tracking-wider ${
+                        isBotRunning
+                          ? 'bg-emerald-950/70 text-emerald-400 border border-emerald-500/50 shadow-sm shadow-emerald-950/50'
+                          : 'bg-slate-800 text-slate-400 border border-slate-700'
+                      }`}
+                    >
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          isBotRunning ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                        }`}
+                      />
+                      {isBotRunning ? 'Robô 24/7 Ativo' : 'Robô em Espera'}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#0B0F17] border border-slate-800 rounded-md text-xs font-medium text-slate-300">
+                      <span className="text-slate-500">Estratégia:</span>
+                      <strong className="text-white font-mono">
+                        {strategyConfig.mhiVariant === 'AUTO_BEST'
+                          ? 'Auto-Estratégia'
+                          : strategyConfig.mhiVariant.replace('_', ' ')}
+                      </strong>
+                      <span className="text-[10px] text-blue-400 font-mono">
+                        ({strategyConfig.mhiMode})
+                      </span>
+                    </div>
+
+                    <div className="hidden sm:flex items-center gap-1 px-2 py-1 bg-[#0B0F17] border border-slate-800 rounded-md text-xs font-mono text-slate-300">
+                      <span className="text-slate-500">Anti-Overlap:</span>
+                      <span className="text-emerald-400 font-bold">1 Ordem Max</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {/* Live Confluence Score */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-slate-400">Confluência:</span>
+                      <div className="flex items-center gap-1.5 bg-[#0B0F17] px-2 py-0.5 rounded border border-slate-800">
+                        <div className="w-12 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full transition-all ${
+                              mhiAnalysis.confidenceScore >= 75
+                                ? 'bg-emerald-400'
+                                : mhiAnalysis.confidenceScore >= 50
+                                ? 'bg-amber-400'
+                                : 'bg-red-400'
+                            }`}
+                            style={{ width: `${mhiAnalysis.confidenceScore}%` }}
+                          />
+                        </div>
+                        <span
+                          className={`font-mono text-xs font-bold tabular-nums ${
+                            mhiAnalysis.confidenceScore >= 75
+                              ? 'text-emerald-400'
+                              : mhiAnalysis.confidenceScore >= 50
+                              ? 'text-amber-400'
+                              : 'text-red-400'
+                          }`}
+                        >
+                          {mhiAnalysis.confidenceScore}%
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Trailing Stop Status */}
+                    {/* Trailing Stop Status */}
+                    {riskConfig.trailingStopWinEnabled && (
+                      <div className="hidden md:flex items-center gap-1 text-[11px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-800/50 px-2 py-0.5 rounded">
+                        <span>🛡️ Trailing Stop:</span>
+                        <strong className="text-emerald-300">
+                          {riskConfig.trailingStopWinActivationPercent || 60}% Meta
+                        </strong>
+                      </div>
+                    )}
+
+                    {/* ATR Volatility Status */}
+                    {strategyConfig.useAtrFilter && (
+                      <div
+                        className={`hidden lg:flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded border ${
+                          technicalSnapshot.atrStatus === 'NORMAL'
+                            ? 'bg-cyan-950/40 border-cyan-800/50 text-cyan-300'
+                            : technicalSnapshot.atrStatus === 'HIGH_VOLATILITY'
+                            ? 'bg-rose-950/60 border-rose-700/60 text-rose-300 animate-pulse'
+                            : 'bg-amber-950/60 border-amber-700/60 text-amber-300 animate-pulse'
+                        }`}
+                      >
+                        <span>ATR:</span>
+                        <strong>{technicalSnapshot.atrPercent.toFixed(3)}%</strong>
+                        <span className="text-[10px]">
+                          ({technicalSnapshot.atrStatus === 'NORMAL' ? 'Normal' : 'Pausado'})
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Session Sequence Win / Loss */}
+                    <div className="flex items-center gap-1 text-[11px] font-mono text-slate-400 bg-[#0B0F17] border border-slate-800 px-2 py-0.5 rounded">
+                      <span>Seq:</span>
+                      <span className="text-emerald-400 font-bold">
+                        {riskState.consecutiveWins || 0}W
+                      </span>
+                      <span>/</span>
+                      <span className="text-red-400 font-bold">
+                        {riskState.consecutiveLosses || 0}L
+                      </span>
+                    </div>
+
+                    {/* Market Sentiment Cockpit Badge */}
+                    {strategyConfig.useSentimentFilter && (
+                      <div
+                        className={`hidden xl:flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded border ${
+                          technicalSnapshot.marketSentiment?.sentiment === 'BULLISH'
+                            ? 'bg-emerald-950/40 border-emerald-800/50 text-emerald-300'
+                            : technicalSnapshot.marketSentiment?.sentiment === 'BEARISH'
+                            ? 'bg-rose-950/40 border-rose-800/50 text-rose-300'
+                            : 'bg-slate-900 border-slate-700 text-slate-300'
+                        }`}
+                      >
+                        <span>Sentimento:</span>
+                        <strong className="text-white">
+                          {technicalSnapshot.marketSentiment?.bullPower ?? 50}% T / {technicalSnapshot.marketSentiment?.bearPower ?? 50}% U
+                        </strong>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <CandlestickChart
                   candles={activeCandles}
                   config={strategyConfig}
@@ -1923,7 +2226,7 @@ export default function App() {
 
                 {/* High-Density Unified Technical Indicators Bar */}
                 <div className="bg-[#111827] border border-slate-800 rounded-lg px-3.5 py-2.5">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 sm:gap-4 items-center">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 sm:gap-3 items-center">
                     <div className="flex flex-col">
                       <span className="text-[10px] text-slate-400 font-medium">EMA {strategyConfig.emaFastPeriod}/{strategyConfig.emaSlowPeriod}</span>
                       <span
@@ -1966,13 +2269,35 @@ export default function App() {
                     </div>
 
                     <div className="flex flex-col">
+                      <span className="text-[10px] text-slate-400 font-medium">ATR ({strategyConfig.atrPeriod || 14})</span>
+                      <div className="font-mono tabular-nums font-bold text-xs flex items-center gap-1 truncate">
+                        <span className="text-cyan-300">{technicalSnapshot.atrPercent.toFixed(3)}%</span>
+                        <span
+                          className={`text-[9px] font-sans px-1 py-0.2 rounded font-bold ${
+                            technicalSnapshot.atrStatus === 'HIGH_VOLATILITY'
+                              ? 'bg-rose-950/80 text-rose-300 border border-rose-800/40'
+                              : technicalSnapshot.atrStatus === 'LOW_VOLATILITY'
+                              ? 'bg-amber-950/80 text-amber-300 border border-amber-800/40'
+                              : 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/40'
+                          }`}
+                        >
+                          {technicalSnapshot.atrStatus === 'HIGH_VOLATILITY'
+                            ? 'Alta Vol.'
+                            : technicalSnapshot.atrStatus === 'LOW_VOLATILITY'
+                            ? 'Baixa Vol.'
+                            : 'Normal'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col">
                       <span className="text-[10px] text-slate-400 font-medium">Bollinger (20, 2)</span>
                       <span className="font-mono font-bold text-xs text-indigo-300 truncate">
                         {technicalSnapshot.bbPosition === 'ABOVE_UPPER'
                           ? 'Rompeu Sup.'
                           : technicalSnapshot.bbPosition === 'BELOW_LOWER'
                           ? 'Rompeu Inf.'
-                          : 'Dentro do Canal'}
+                          : 'Dentro Canal'}
                       </span>
                     </div>
 
@@ -1994,9 +2319,9 @@ export default function App() {
                       <span className="text-[10px] text-slate-400 font-medium">S / R Auto</span>
                       <span className="font-mono font-bold text-xs text-slate-200 truncate">
                         {technicalSnapshot.nearResistance
-                          ? 'Testando Topo'
+                          ? 'Testa Topo'
                           : technicalSnapshot.nearSupport
-                          ? 'Testando Fundo'
+                          ? 'Testa Fundo'
                           : 'Zona Neutra'}
                       </span>
                     </div>
@@ -2005,9 +2330,50 @@ export default function App() {
                       <span className="text-[10px] text-slate-400 font-medium">Price Action</span>
                       <span className="font-mono font-bold text-xs text-amber-300 truncate">
                         {technicalSnapshot.priceActionPattern === 'NONE'
-                          ? 'Formação Padrão'
+                          ? 'Padrão'
                           : technicalSnapshot.priceActionPattern.replace('_', ' ')}
                       </span>
+                    </div>
+
+                    {/* Market Sentiment & Volume Power */}
+                    <div className="flex flex-col">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-slate-400 font-medium">Sentimento</span>
+                        <span
+                          className={`font-mono font-bold text-[10px] ${
+                            technicalSnapshot.marketSentiment?.sentiment === 'BULLISH'
+                              ? 'text-emerald-400'
+                              : technicalSnapshot.marketSentiment?.sentiment === 'BEARISH'
+                              ? 'text-rose-400'
+                              : 'text-slate-400'
+                          }`}
+                        >
+                          {technicalSnapshot.marketSentiment?.sentiment === 'BULLISH'
+                            ? 'Touros'
+                            : technicalSnapshot.marketSentiment?.sentiment === 'BEARISH'
+                            ? 'Ursos'
+                            : 'Equilíbrio'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <div className="flex-1 h-1.5 bg-slate-800 rounded-full overflow-hidden flex" title={`Touros: ${technicalSnapshot.marketSentiment?.bullPower ?? 50}% | Ursos: ${technicalSnapshot.marketSentiment?.bearPower ?? 50}%`}>
+                          <div
+                            className="bg-emerald-500 h-full transition-all duration-300"
+                            style={{
+                              width: `${technicalSnapshot.marketSentiment?.bullPower ?? 50}%`,
+                            }}
+                          />
+                          <div
+                            className="bg-rose-500 h-full transition-all duration-300"
+                            style={{
+                              width: `${technicalSnapshot.marketSentiment?.bearPower ?? 50}%`,
+                            }}
+                          />
+                        </div>
+                        <span className="font-mono tabular-nums text-[10px] text-slate-300 whitespace-nowrap">
+                          {technicalSnapshot.marketSentiment?.bullPower ?? 50}%
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2019,14 +2385,14 @@ export default function App() {
                   <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                     <div>
                       <h2 className="text-sm font-display font-bold text-white">
-                        Painel de Operações MHI
+                        Painel de Operações ({strategyConfig.mhiVariant === 'AUTO_BEST' ? 'Auto Melhor' : strategyConfig.mhiVariant.replace('_', ' ')})
                       </h2>
                       <p className="text-[11px] text-slate-400">
-                        {strategyConfig.mhiVariant.replace('_', ' ')} · {strategyConfig.mhiMode} · Payout {activeAsset.payout}%
+                        {strategyConfig.mhiMode} · Payout {activeAsset.payout}%
                       </p>
                     </div>
                     <div className="text-right font-mono tabular-nums">
-                      <div className="text-[10px] text-slate-400">Próx. Gatilho MHI</div>
+                      <div className="text-[10px] text-slate-400">Próx. Gatilho</div>
                       <div className="text-sm font-bold text-blue-400">
                         {Math.floor(mhiAnalysis.secondsUntilNextEntry / 60)}:
                         {String(mhiAnalysis.secondsUntilNextEntry % 60).padStart(2, '0')}
@@ -2371,49 +2737,73 @@ export default function App() {
               {terminalBottomTab === 'STRATEGY' && (
                 <div className="bg-[#111827] border border-slate-800 rounded-lg p-4 sm:p-5 space-y-4">
 
-                {/* MHI Variant & Mode */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">
-                      Variação MHI
-                    </label>
-                    <div className="grid grid-cols-3 gap-1 p-1 bg-[#0B0F17] border border-slate-800 rounded-lg">
-                      {(['MHI_1', 'MHI_2', 'MHI_3'] as MHIVariant[]).map((v) => (
-                        <button
-                          key={v}
-                          onClick={() =>
-                            setStrategyConfig((prev) => ({ ...prev, mhiVariant: v }))
-                          }
-                          className={`py-1.5 text-xs font-medium rounded transition-colors cursor-pointer ${
-                            strategyConfig.mhiVariant === v
-                              ? 'bg-blue-600 text-white'
-                              : 'text-slate-400 hover:text-white'
-                          }`}
-                        >
-                          {v.replace('_', ' ')}
-                        </button>
-                      ))}
+                {/* Motor de Estratégias Probabilísticas & Inteligência Auto-Best */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="block text-xs font-bold text-white">
+                        Motor de Estratégia do Robô
+                      </label>
+                      <p className="text-[11px] text-slate-400">
+                        Selecione a lógica operacional ou utilize Auto Melhor para catalogação em tempo real
+                      </p>
                     </div>
+                    <span className="text-[10px] font-mono font-bold text-blue-400 bg-blue-950/60 border border-blue-800/60 px-2 py-0.5 rounded">
+                      8 Estratégias Disponíveis
+                    </span>
                   </div>
 
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1.5">
-                      Contagem de Velas
-                    </label>
-                    <div className="grid grid-cols-2 gap-1 p-1 bg-[#0B0F17] border border-slate-800 rounded-lg">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 p-1 bg-[#0B0F17] border border-slate-800 rounded-lg">
+                    {[
+                      { id: 'AUTO_BEST', label: '🎯 Auto Melhor', desc: 'Escolhe o maior win-rate', highlight: true },
+                      { id: 'MHI_1', label: 'MHI 1', desc: 'Entrada na 1ª vela' },
+                      { id: 'MHI_2', label: 'MHI 2', desc: 'Entrada na 2ª vela' },
+                      { id: 'MHI_3', label: 'MHI 3', desc: 'Entrada na 3ª vela' },
+                      { id: 'MILHAO', label: 'Padrão Milhão', desc: '5 velas no quadrante' },
+                      { id: 'TORRES_GEMEAS', label: 'Torres Gêmeas', desc: 'Vela 1 = Vela 5' },
+                      { id: 'PADRAO_23', label: 'Padrão 23', desc: 'Vela 2 = Vela 4' },
+                      { id: 'TRES_MOSQUETEIROS', label: '3 Mosqueteiros', desc: 'Seguimento de fluxo' },
+                    ].map((st) => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() =>
+                          setStrategyConfig((prev) => ({
+                            ...prev,
+                            mhiVariant: st.id as MHIVariant,
+                          }))
+                        }
+                        className={`p-2 rounded text-left transition-all cursor-pointer border ${
+                          strategyConfig.mhiVariant === st.id
+                            ? 'bg-blue-600 border-blue-400 text-white shadow-sm'
+                            : st.highlight
+                            ? 'bg-blue-950/30 border-blue-800/50 text-blue-300 hover:border-blue-600'
+                            : 'bg-[#111827] border-slate-800/80 text-slate-300 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="text-xs font-bold leading-tight truncate">{st.label}</div>
+                        <div className="text-[10px] opacity-75 truncate leading-tight mt-0.5">{st.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-xs text-slate-400">Modo de Operação Probabilística:</span>
+                    <div className="inline-flex gap-1 p-0.5 bg-[#0B0F17] border border-slate-800 rounded-lg">
                       {(['MINORIA', 'MAIORIA'] as MHIMode[]).map((m) => (
                         <button
                           key={m}
+                          type="button"
                           onClick={() =>
                             setStrategyConfig((prev) => ({ ...prev, mhiMode: m }))
                           }
-                          className={`py-1.5 text-xs font-medium rounded transition-colors cursor-pointer ${
+                          className={`px-3 py-1 text-xs font-bold rounded transition-colors cursor-pointer ${
                             strategyConfig.mhiMode === m
                               ? 'bg-blue-600 text-white'
                               : 'text-slate-400 hover:text-white'
                           }`}
                         >
-                          {m === 'MINORIA' ? 'Minoria' : 'Maioria'}
+                          {m === 'MINORIA' ? 'Minoria (Reversão)' : 'Maioria (Fluxo)'}
                         </button>
                       ))}
                     </div>
@@ -2627,6 +3017,316 @@ export default function App() {
                       </button>
                     );
                   })}
+                </div>
+
+                {/* Advanced ATR Volatility Filter Panel */}
+                <div className="bg-[#0A0E17] border border-cyan-500/35 rounded-lg p-3 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-md bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center shrink-0">
+                        <Activity className="w-4 h-4 text-cyan-400" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <span>Filtro de Volatilidade ATR (Average True Range)</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-mono font-semibold">
+                            ATR({strategyConfig.atrPeriod || 14})
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Pausa o robô se a volatilidade do mercado estiver fora dos limites (muito alta ou muito baixa)
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setStrategyConfig((prev) => ({
+                          ...prev,
+                          useAtrFilter: !prev.useAtrFilter,
+                        }))
+                      }
+                      className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors shadow-sm ${
+                        strategyConfig.useAtrFilter
+                          ? 'bg-cyan-600 text-white hover:bg-cyan-500'
+                          : 'bg-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {strategyConfig.useAtrFilter ? 'ATIVO' : 'DESATIVADO'}
+                    </button>
+                  </div>
+
+                  {strategyConfig.useAtrFilter && (
+                    <div className="space-y-3 pt-2 border-t border-slate-800/80">
+                      {/* Real-time ATR Volatility Status Card for Active Pair */}
+                      <div className="p-2.5 rounded bg-[#06080E] border border-slate-800/90 text-[11px] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 font-mono text-slate-300">
+                          <span className="font-bold text-white">{activeAsset.ticker}:</span>
+                          <span className="text-cyan-400 font-bold">
+                            ATR = {technicalSnapshot.atrValue.toFixed(5)}
+                          </span>
+                          <span className="text-slate-400">
+                            ({technicalSnapshot.atrPercent.toFixed(3)}% da cotação)
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 font-semibold shrink-0">
+                          {technicalSnapshot.atrStatus === 'HIGH_VOLATILITY' ? (
+                            <span className="text-rose-400 flex items-center gap-1 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-500/40 text-[10px]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                              🛑 Alta Volatilidade Excessiva (Operações Pausadas)
+                            </span>
+                          ) : technicalSnapshot.atrStatus === 'LOW_VOLATILITY' ? (
+                            <span className="text-amber-400 flex items-center gap-1 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-500/40 text-[10px]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                              ⚠️ Baixa Volatilidade / Sem Amplitude (Pausado)
+                            </span>
+                          ) : (
+                            <span className="text-emerald-400 flex items-center gap-1 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/40 text-[10px]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                              🟢 Volatilidade Ideal (Dentro da Faixa Permitida)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Mode Selector */}
+                      <div>
+                        <span className="text-[10px] text-slate-400 block mb-1">
+                          Modo de Bloqueio da Volatilidade:
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                          {[
+                            { id: 'OUTSIDE_RANGE' as const, label: 'Fora da Faixa (Ambos)', desc: 'Pausa se for < Mín ou > Máx' },
+                            { id: 'HIGH_ONLY' as const, label: 'Apenas Volatilidade Alta', desc: 'Pausa apenas se estourar Máx' },
+                            { id: 'LOW_ONLY' as const, label: 'Apenas Volatilidade Baixa', desc: 'Pausa apenas se estagnar < Mín' },
+                          ].map((m) => (
+                            <button
+                              key={m.id}
+                              type="button"
+                              onClick={() =>
+                                setStrategyConfig((prev) => ({
+                                  ...prev,
+                                  atrBlockMode: m.id,
+                                }))
+                              }
+                              className={`p-1.5 rounded text-left transition-all border cursor-pointer ${
+                                (strategyConfig.atrBlockMode || 'OUTSIDE_RANGE') === m.id
+                                  ? 'bg-cyan-600/30 border-cyan-500 text-cyan-200'
+                                  : 'bg-[#111827] border-slate-800 text-slate-400 hover:border-slate-700'
+                              }`}
+                            >
+                              <div className="text-[11px] font-bold truncate">{m.label}</div>
+                              <div className="text-[9px] opacity-75 truncate">{m.desc}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Thresholds: Min & Max Percent */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Minimum ATR Threshold */}
+                        <div className="bg-[#111827] border border-slate-800/80 rounded p-2.5 space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-amber-400 font-bold flex items-center gap-1">
+                              <span>⚠️ Limite Mínimo de Volatilidade</span>
+                            </span>
+                            <span className="font-mono text-cyan-300 font-bold text-xs">
+                              {(strategyConfig.atrMinPercent ?? 0.015).toFixed(3)}%
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 leading-tight">
+                            Pausa o robô se a variação média for menor que esse percentual da cotação, evitando empates, dojis e mercado estagnado.
+                          </p>
+                          <div className="flex items-center gap-1">
+                            {[0.008, 0.015, 0.025].map((val) => (
+                              <button
+                                key={val}
+                                type="button"
+                                onClick={() =>
+                                  setStrategyConfig((prev) => ({
+                                    ...prev,
+                                    atrMinPercent: val,
+                                  }))
+                                }
+                                className={`flex-1 py-1 rounded text-[10px] font-mono transition-colors cursor-pointer border ${
+                                  (strategyConfig.atrMinPercent ?? 0.015) === val
+                                    ? 'bg-amber-600/30 border-amber-500 text-amber-200 font-bold'
+                                    : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:border-slate-700'
+                                }`}
+                              >
+                                {val.toFixed(3)}%
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Maximum ATR Threshold */}
+                        <div className="bg-[#111827] border border-slate-800/80 rounded p-2.5 space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-rose-400 font-bold flex items-center gap-1">
+                              <span>🛑 Limite Máximo de Volatilidade</span>
+                            </span>
+                            <span className="font-mono text-cyan-300 font-bold text-xs">
+                              {(strategyConfig.atrMaxPercent ?? 0.12).toFixed(3)}%
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400 leading-tight">
+                            Pausa o robô se a amplitude ultrapassar esse percentual, blindando contra explosões atípicas de notícias e falsos rompimentos.
+                          </p>
+                          <div className="flex items-center gap-1">
+                            {[0.08, 0.12, 0.18].map((val) => (
+                              <button
+                                key={val}
+                                type="button"
+                                onClick={() =>
+                                  setStrategyConfig((prev) => ({
+                                    ...prev,
+                                    atrMaxPercent: val,
+                                  }))
+                                }
+                                className={`flex-1 py-1 rounded text-[10px] font-mono transition-colors cursor-pointer border ${
+                                  (strategyConfig.atrMaxPercent ?? 0.12) === val
+                                    ? 'bg-rose-600/30 border-rose-500 text-rose-200 font-bold'
+                                    : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:border-slate-700'
+                                }`}
+                              >
+                                {val.toFixed(3)}%
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Market Sentiment & Volume Power Configuration Card */}
+                <div className="bg-[#0B0F17] border border-slate-800 rounded-lg p-3.5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/50" />
+                      <div>
+                        <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                          <span>Filtro de Sentimento & Força de Volume (Bull/Bear Power)</span>
+                          <span className="text-[10px] text-emerald-400 font-mono font-normal">
+                            [Volume Spread Analysis]
+                          </span>
+                        </h4>
+                        <p className="text-[11px] text-slate-400">
+                          Mede a pressão compradora (Touros) vs. vendedora (Ursos) das velas recentes para barrar sinais MHI contra o fluxo institucional dominante.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setStrategyConfig((prev) => ({
+                          ...prev,
+                          useSentimentFilter: !prev.useSentimentFilter,
+                        }))
+                      }
+                      className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-colors shadow-sm ${
+                        strategyConfig.useSentimentFilter
+                          ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                          : 'bg-slate-800 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {strategyConfig.useSentimentFilter ? 'ATIVO' : 'DESATIVADO'}
+                    </button>
+                  </div>
+
+                  {strategyConfig.useSentimentFilter && (
+                    <div className="space-y-3 pt-2 border-t border-slate-800/80">
+                      {/* Live Market Sentiment Visualizer for Active Pair */}
+                      <div className="p-2.5 rounded bg-[#06080E] border border-slate-800/90 text-[11px] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2 font-mono">
+                            <span className="font-bold text-white">{activeAsset.ticker}:</span>
+                            <span className="text-emerald-400 font-bold">
+                              Touros: {technicalSnapshot.marketSentiment?.bullPower ?? 50}%
+                            </span>
+                            <span className="text-slate-500">|</span>
+                            <span className="text-rose-400 font-bold">
+                              Ursos: {technicalSnapshot.marketSentiment?.bearPower ?? 50}%
+                            </span>
+                          </div>
+                          {/* Live 2-Color Ratio Progress Bar */}
+                          <div className="w-full sm:w-64 h-2 bg-slate-800 rounded-full overflow-hidden flex shadow-inner">
+                            <div
+                              className="bg-emerald-500 h-full transition-all duration-300"
+                              style={{ width: `${technicalSnapshot.marketSentiment?.bullPower ?? 50}%` }}
+                            />
+                            <div
+                              className="bg-rose-500 h-full transition-all duration-300"
+                              style={{ width: `${technicalSnapshot.marketSentiment?.bearPower ?? 50}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 font-semibold shrink-0">
+                          {technicalSnapshot.marketSentiment?.sentiment === 'BULLISH' ? (
+                            <span className="text-emerald-300 flex items-center gap-1 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/40 text-[10px]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              Dominância Compradora (CALL favorecido / PUT barrado)
+                            </span>
+                          ) : technicalSnapshot.marketSentiment?.sentiment === 'BEARISH' ? (
+                            <span className="text-rose-300 flex items-center gap-1 bg-rose-950/60 px-2 py-0.5 rounded border border-rose-500/40 text-[10px]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+                              Dominância Vendedora (PUT favorecido / CALL barrado)
+                            </span>
+                          ) : (
+                            <span className="text-slate-300 flex items-center gap-1 bg-slate-900 px-2 py-0.5 rounded border border-slate-700 text-[10px]">
+                              <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                              Sentimento Neutro / Equilíbrio de Forças
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Threshold Configuration */}
+                      <div className="bg-[#111827] border border-slate-800/80 rounded p-2.5 space-y-2">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-300 font-bold flex items-center gap-1">
+                            <span>Limite de Dominância Mínima para Bloqueio / Confluência</span>
+                          </span>
+                          <span className="font-mono text-emerald-400 font-bold text-xs">
+                            {strategyConfig.sentimentThreshold ?? 55}% de Força
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-tight">
+                          Quando uma das forças ultrapassa esse patamar, entradas opostas são imediatamente bloqueadas e entradas alinhadas ganham confluência técnica.
+                        </p>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 pt-1">
+                          {[
+                            { val: 52, label: '52% - Sensível', desc: 'Ativa com leve pressão' },
+                            { val: 55, label: '55% - Padrão', desc: 'Equilíbrio recomendado' },
+                            { val: 60, label: '60% - Moderado', desc: 'Exige fluxo confirmado' },
+                            { val: 65, label: '65% - Estrito', desc: 'Apenas tendências fortes' },
+                          ].map((item) => (
+                            <button
+                              key={item.val}
+                              type="button"
+                              onClick={() =>
+                                setStrategyConfig((prev) => ({
+                                  ...prev,
+                                  sentimentThreshold: item.val,
+                                }))
+                              }
+                              className={`p-1.5 rounded text-left transition-colors cursor-pointer border ${
+                                (strategyConfig.sentimentThreshold ?? 55) === item.val
+                                  ? 'bg-emerald-600/30 border-emerald-500 text-emerald-200'
+                                  : 'bg-[#0B0F17] border-slate-800 text-slate-400 hover:border-slate-700'
+                              }`}
+                            >
+                              <div className="text-[11px] font-bold">{item.label}</div>
+                              <div className="text-[9px] opacity-75">{item.desc}</div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

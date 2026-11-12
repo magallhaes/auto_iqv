@@ -4,6 +4,7 @@ import {
   MHISignalAnalysis,
   PairCatalogStats,
   StrategyConfig,
+  StrategyVariant,
   TechnicalSnapshot,
   CatalogQuadrantResult,
   EconomicNewsEvent,
@@ -104,6 +105,156 @@ export function calculateMACD(
   const signalLine = calculateEMA(macdLine, signalPeriod);
   const histogram = macdLine.map((val, i) => val - (signalLine[i] ?? 0));
   return { macdLine, signalLine, histogram };
+}
+
+/**
+ * Average True Range (ATR) & Normalized Volatility Percentage
+ * TR = max(High - Low, |High - PrevClose|, |Low - PrevClose|)
+ */
+export function calculateATR(
+  candles: Candle[],
+  period = 14
+): {
+  atrValues: number[];
+  atrPercentValues: number[];
+  currentAtr: number;
+  currentAtrPercent: number;
+  averageAtr: number;
+} {
+  if (candles.length === 0) {
+    return {
+      atrValues: [],
+      atrPercentValues: [],
+      currentAtr: 0,
+      currentAtrPercent: 0,
+      averageAtr: 0,
+    };
+  }
+
+  const trs: number[] = new Array(candles.length);
+  trs[0] = candles[0].max - candles[0].min;
+
+  for (let i = 1; i < candles.length; i++) {
+    const high = candles[i].max;
+    const low = candles[i].min;
+    const prevClose = candles[i - 1].close;
+    const hl = high - low;
+    const hpc = Math.abs(high - prevClose);
+    const lpc = Math.abs(low - prevClose);
+    trs[i] = Math.max(hl, hpc, lpc);
+  }
+
+  const atr: number[] = new Array(candles.length).fill(0);
+  const atrPercent: number[] = new Array(candles.length).fill(0);
+
+  if (candles.length < period) {
+    const simpleAvg = trs.reduce((a, b) => a + b, 0) / trs.length;
+    const lastClose = candles[candles.length - 1].close || 1;
+    return {
+      atrValues: trs,
+      atrPercentValues: trs.map((t, idx) => (t / (candles[idx]?.close || 1)) * 100),
+      currentAtr: simpleAvg,
+      currentAtrPercent: (simpleAvg / lastClose) * 100,
+      averageAtr: simpleAvg,
+    };
+  }
+
+  let firstSum = 0;
+  for (let i = 0; i < period; i++) {
+    firstSum += trs[i];
+  }
+  atr[period - 1] = firstSum / period;
+  atrPercent[period - 1] = (atr[period - 1] / (candles[period - 1].close || 1)) * 100;
+
+  for (let i = period; i < candles.length; i++) {
+    atr[i] = (atr[i - 1] * (period - 1) + trs[i]) / period;
+    atrPercent[i] = (atr[i] / (candles[i].close || 1)) * 100;
+  }
+
+  const currentAtr = atr[atr.length - 1] || 0;
+  const currentAtrPercent = atrPercent[atrPercent.length - 1] || 0;
+  const recentSlice = atr.slice(-40).filter((v) => v > 0);
+  const averageAtr = recentSlice.length > 0
+    ? recentSlice.reduce((s, v) => s + v, 0) / recentSlice.length
+    : currentAtr;
+
+  return {
+    atrValues: atr,
+    atrPercentValues: atrPercent,
+    currentAtr,
+    currentAtrPercent,
+    averageAtr,
+  };
+}
+
+export interface MarketSentimentData {
+  bullPower: number; // 0 - 100 (%)
+  bearPower: number; // 0 - 100 (%)
+  sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+}
+
+/**
+ * Calculates Market Sentiment / Bullish vs Bearish Volume Power from recent candles
+ * Combines price spread (high-low delta) with volume distribution
+ */
+export function calculateMarketSentiment(candles: Candle[], lookback = 20): MarketSentimentData {
+  if (candles.length === 0) {
+    return { bullPower: 50, bearPower: 50, sentiment: 'NEUTRAL' };
+  }
+
+  const slice = candles.slice(-lookback);
+  let totalBuyVolume = 0;
+  let totalSellVolume = 0;
+
+  for (const c of slice) {
+    const high = c.max;
+    const low = c.min;
+    const open = c.open;
+    const close = c.close;
+    const range = Math.max(high - low, 0.000001);
+
+    // Candle volume (fallback to price range delta if volume is 0 or undefined)
+    const baseVolume = (c.volume && c.volume > 0) ? c.volume : (range * 100000);
+
+    let buyFraction = 0.5;
+    let sellFraction = 0.5;
+
+    if (close > open) {
+      // Bullish candle: buyers drove price from low to close
+      buyFraction = Math.min(1, Math.max(0.05, (close - low) / range));
+      sellFraction = Math.min(1, Math.max(0.05, (high - close) / range));
+    } else if (close < open) {
+      // Bearish candle: sellers drove price from high to close
+      buyFraction = Math.min(1, Math.max(0.05, (close - low) / range));
+      sellFraction = Math.min(1, Math.max(0.05, (high - close) / range));
+    } else {
+      buyFraction = 0.5;
+      sellFraction = 0.5;
+    }
+
+    const normSum = buyFraction + sellFraction;
+    const normBuy = buyFraction / normSum;
+    const normSell = sellFraction / normSum;
+
+    totalBuyVolume += baseVolume * normBuy;
+    totalSellVolume += baseVolume * normSell;
+  }
+
+  const totalVol = Math.max(totalBuyVolume + totalSellVolume, 0.00001);
+  let bullPower = Math.round((totalBuyVolume / totalVol) * 100);
+  let bearPower = 100 - bullPower;
+
+  bullPower = Math.min(100, Math.max(0, bullPower));
+  bearPower = Math.min(100, Math.max(0, bearPower));
+
+  let sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
+  if (bullPower >= 55) {
+    sentiment = 'BULLISH';
+  } else if (bearPower >= 55) {
+    sentiment = 'BEARISH';
+  }
+
+  return { bullPower, bearPower, sentiment };
 }
 
 export function detectSupportResistance(candles: Candle[], lookback = 40): { support: number; resistance: number } {
@@ -240,6 +391,14 @@ export function computeTechnicalSnapshot(
       nearSupport: false,
       nearResistance: false,
       priceActionPattern: 'NONE',
+      atrValue: 0,
+      atrPercent: 0,
+      atrStatus: 'NORMAL',
+      marketSentiment: {
+        bullPower: 50,
+        bearPower: 50,
+        sentiment: 'NEUTRAL',
+      },
     };
   }
 
@@ -338,6 +497,20 @@ export function computeTechnicalSnapshot(
   const nearSupport = Math.abs(lastClose - sr.support) <= bandWidth * 0.18;
   const nearResistance = Math.abs(sr.resistance - lastClose) <= bandWidth * 0.18;
 
+  const atrPeriod = config?.atrPeriod ?? 14;
+  const atrData = calculateATR(candles, atrPeriod);
+  const minPercent = config?.atrMinPercent ?? 0.015;
+  const maxPercent = config?.atrMaxPercent ?? 0.12;
+
+  let atrStatus: TechnicalSnapshot['atrStatus'] = 'NORMAL';
+  if (atrData.currentAtrPercent > maxPercent) {
+    atrStatus = 'HIGH_VOLATILITY';
+  } else if (atrData.currentAtrPercent < minPercent) {
+    atrStatus = 'LOW_VOLATILITY';
+  }
+
+  const marketSentiment = calculateMarketSentiment(candles, 20);
+
   return {
     ema9,
     ema21,
@@ -360,6 +533,10 @@ export function computeTechnicalSnapshot(
     nearSupport,
     nearResistance,
     priceActionPattern: pa,
+    atrValue: atrData.currentAtr,
+    atrPercent: atrData.currentAtrPercent,
+    atrStatus,
+    marketSentiment,
   };
 }
 
@@ -376,56 +553,173 @@ export function evaluateMHIConfluence(
   const tf = config.timeframe; // 60 for M1, 300 for M5
   const quadrantSizeCandles = 5; // 5 candles per quadrant (5m in M1, 25m/30m in M5)
   const quadrantSeconds = tf * quadrantSizeCandles;
-
   const currentQuadrantStart =
     Math.floor(serverNowSeconds / quadrantSeconds) * quadrantSeconds;
 
-  const variantOffset =
-    config.mhiVariant === 'MHI_1' ? 0 : config.mhiVariant === 'MHI_2' ? 1 : 2;
-
-  // Next entry timestamp
-  let nextEntryTime = currentQuadrantStart + variantOffset * tf;
-  if (serverNowSeconds >= nextEntryTime) {
-    nextEntryTime = currentQuadrantStart + quadrantSeconds + variantOffset * tf;
-  }
-  const secondsUntilNextEntry = Math.max(0, nextEntryTime - serverNowSeconds);
-
-  // Locate the last completed 3 base candles of the relevant quadrant
-  // In MHI, the base candles are the last 3 candles of the 5-candle block (indices 2, 3, 4 of the previous quadrant)
   const closedCandles = candles.filter((c) => c.to <= serverNowSeconds);
-  const lastThree = closedCandles.slice(-3);
-
-  const c1Color = lastThree[0] ? getCandleColor(lastThree[0]) : 'DOJI';
-  const c2Color = lastThree[1] ? getCandleColor(lastThree[1]) : 'DOJI';
-  const c3Color = lastThree[2] ? getCandleColor(lastThree[2]) : 'DOJI';
-
-  const colors = [c1Color, c2Color, c3Color];
-  const hasDojiInBase = colors.includes('DOJI');
-  const greenCount = colors.filter((c) => c === 'GREEN').length;
-  const redCount = colors.filter((c) => c === 'RED').length;
-
-  let rawDirection: 'CALL' | 'PUT' | 'NEUTRAL' = 'NEUTRAL';
-  if (greenCount !== redCount) {
-    const majorityColor = greenCount > redCount ? 'GREEN' : 'RED';
-    const minorityColor = greenCount < redCount ? 'GREEN' : 'RED';
-    const targetColor = config.mhiMode === 'MINORIA' ? minorityColor : majorityColor;
-    rawDirection = targetColor === 'GREEN' ? 'CALL' : 'PUT';
-  }
-
   const blockReasons: string[] = [];
   const confluenceReasons: string[] = [];
-  let confidenceScore = 62;
+  let confidenceScore = 65;
+
+  let chosenVariant = config.mhiVariant;
+  let autoBestReason = '';
+
+  // If AUTO_BEST, find the strategy with the best historical win rate on these candles
+  if (chosenVariant === 'AUTO_BEST') {
+    const candidateVariants: StrategyVariant[] = [
+      'MHI_1',
+      'MHI_2',
+      'MHI_3',
+      'MILHAO',
+      'TORRES_GEMEAS',
+      'PADRAO_23',
+      'TRES_MOSQUETEIROS',
+    ];
+    let bestWinRate = -1;
+    let bestVar: StrategyVariant = 'MHI_1';
+
+    for (const v of candidateVariants) {
+      const stats = catalogPairCandles(
+        {
+          id: 1,
+          ticker: assetTicker,
+          name: assetTicker,
+          isOtc: false,
+          payout: 85,
+          isOpen: true,
+          category: 'binary',
+        },
+        candles,
+        { ...config, mhiVariant: v }
+      );
+      if (stats.validSignalsCount >= 3 && stats.winRateGale1 > bestWinRate) {
+        bestWinRate = stats.winRateGale1;
+        bestVar = v;
+      }
+    }
+    chosenVariant = bestVar;
+    autoBestReason = `🎯 Auto-Estratégia: ${bestVar.replace('_', ' ')} selecionada (Win-Rate: ${bestWinRate > 0 ? bestWinRate.toFixed(1) + '%' : 'Alta Confluência'})`;
+  }
+
+  let nextEntryTime = currentQuadrantStart;
+  let rawDirection: 'CALL' | 'PUT' | 'NEUTRAL' = 'NEUTRAL';
+  let c1Color: 'GREEN' | 'RED' | 'DOJI' = 'DOJI';
+  let c2Color: 'GREEN' | 'RED' | 'DOJI' = 'DOJI';
+  let c3Color: 'GREEN' | 'RED' | 'DOJI' = 'DOJI';
+  let hasDojiInBase = false;
+
+  if (chosenVariant === 'MHI_1' || chosenVariant === 'MHI_2' || chosenVariant === 'MHI_3') {
+    const variantOffset = chosenVariant === 'MHI_1' ? 0 : chosenVariant === 'MHI_2' ? 1 : 2;
+    nextEntryTime = currentQuadrantStart + variantOffset * tf;
+    if (serverNowSeconds >= nextEntryTime) {
+      nextEntryTime = currentQuadrantStart + quadrantSeconds + variantOffset * tf;
+    }
+    const lastThree = closedCandles.slice(-3);
+    c1Color = lastThree[0] ? getCandleColor(lastThree[0]) : 'DOJI';
+    c2Color = lastThree[1] ? getCandleColor(lastThree[1]) : 'DOJI';
+    c3Color = lastThree[2] ? getCandleColor(lastThree[2]) : 'DOJI';
+    const colors = [c1Color, c2Color, c3Color];
+    hasDojiInBase = colors.includes('DOJI');
+    const greenCount = colors.filter((c) => c === 'GREEN').length;
+    const redCount = colors.filter((c) => c === 'RED').length;
+    if (greenCount !== redCount) {
+      const majorityColor = greenCount > redCount ? 'GREEN' : 'RED';
+      const minorityColor = greenCount < redCount ? 'GREEN' : 'RED';
+      const targetColor = config.mhiMode === 'MINORIA' ? minorityColor : majorityColor;
+      rawDirection = targetColor === 'GREEN' ? 'CALL' : 'PUT';
+    }
+    if (rawDirection !== 'NEUTRAL') {
+      confluenceReasons.push(
+        `${chosenVariant.replace('_', ' ')} (${config.mhiMode}): ${greenCount} Verde / ${redCount} Vermelha → ${rawDirection}`
+      );
+    }
+  } else if (chosenVariant === 'MILHAO') {
+    nextEntryTime = currentQuadrantStart;
+    if (serverNowSeconds >= nextEntryTime) {
+      nextEntryTime = currentQuadrantStart + quadrantSeconds;
+    }
+    const lastFive = closedCandles.slice(-5);
+    const colors = lastFive.map((c) => getCandleColor(c));
+    c1Color = colors[2] || 'DOJI';
+    c2Color = colors[3] || 'DOJI';
+    c3Color = colors[4] || 'DOJI';
+    hasDojiInBase = colors.includes('DOJI');
+    const greenCount = colors.filter((c) => c === 'GREEN').length;
+    const redCount = colors.filter((c) => c === 'RED').length;
+    if (greenCount !== redCount) {
+      const majorityColor = greenCount > redCount ? 'GREEN' : 'RED';
+      const minorityColor = greenCount < redCount ? 'GREEN' : 'RED';
+      const targetColor = config.mhiMode === 'MINORIA' ? minorityColor : majorityColor;
+      rawDirection = targetColor === 'GREEN' ? 'CALL' : 'PUT';
+      confluenceReasons.push(
+        `Padrão Milhão (${config.mhiMode}): Bloco 5 velas (${greenCount}V / ${redCount}R) → ${rawDirection}`
+      );
+    }
+  } else if (chosenVariant === 'TORRES_GEMEAS') {
+    nextEntryTime = currentQuadrantStart + 4 * tf;
+    if (serverNowSeconds >= nextEntryTime) {
+      nextEntryTime = currentQuadrantStart + quadrantSeconds + 4 * tf;
+    }
+    // Base is 1st candle of quadrant (offset 0)
+    const baseCandle = closedCandles.find((c) => c.from === currentQuadrantStart) || closedCandles.slice(-4)[0];
+    if (baseCandle) {
+      const color = getCandleColor(baseCandle);
+      c1Color = color;
+      c2Color = color;
+      c3Color = color;
+      if (color === 'DOJI') hasDojiInBase = true;
+      else {
+        const target = config.mhiMode === 'MINORIA' ? (color === 'GREEN' ? 'RED' : 'GREEN') : color;
+        rawDirection = target === 'GREEN' ? 'CALL' : 'PUT';
+        confluenceReasons.push(`Torres Gêmeas: Vela 1 (${color}) espelhada na Vela 5 → ${rawDirection}`);
+      }
+    }
+  } else if (chosenVariant === 'PADRAO_23') {
+    nextEntryTime = currentQuadrantStart + 3 * tf;
+    if (serverNowSeconds >= nextEntryTime) {
+      nextEntryTime = currentQuadrantStart + quadrantSeconds + 3 * tf;
+    }
+    // Base is 2nd candle of quadrant (offset 1*tf)
+    const baseCandle = closedCandles.find((c) => c.from === currentQuadrantStart + tf) || closedCandles.slice(-3)[0];
+    if (baseCandle) {
+      const color = getCandleColor(baseCandle);
+      c1Color = color;
+      c2Color = color;
+      c3Color = color;
+      if (color === 'DOJI') hasDojiInBase = true;
+      else {
+        const target = config.mhiMode === 'MINORIA' ? (color === 'GREEN' ? 'RED' : 'GREEN') : color;
+        rawDirection = target === 'GREEN' ? 'CALL' : 'PUT';
+        confluenceReasons.push(`Padrão 23: Vela 2 (${color}) espelhada na Vela 4 → ${rawDirection}`);
+      }
+    }
+  } else if (chosenVariant === 'TRES_MOSQUETEIROS') {
+    nextEntryTime = Math.floor(serverNowSeconds / tf) * tf + tf;
+    const lastThree = closedCandles.slice(-3);
+    c1Color = lastThree[0] ? getCandleColor(lastThree[0]) : 'DOJI';
+    c2Color = lastThree[1] ? getCandleColor(lastThree[1]) : 'DOJI';
+    c3Color = lastThree[2] ? getCandleColor(lastThree[2]) : 'DOJI';
+    if (c1Color === 'DOJI' || c2Color === 'DOJI' || c3Color === 'DOJI') {
+      hasDojiInBase = true;
+    } else if (c1Color === 'GREEN' && c2Color === 'GREEN' && c3Color === 'GREEN') {
+      rawDirection = 'CALL';
+      confluenceReasons.push('Três Mosqueteiros: 3 velas verdes consecutivas → CALL em fluxo');
+    } else if (c1Color === 'RED' && c2Color === 'RED' && c3Color === 'RED') {
+      rawDirection = 'PUT';
+      confluenceReasons.push('Três Mosqueteiros: 3 velas vermelhas consecutivas → PUT em fluxo');
+    }
+  }
+
+  if (autoBestReason) confluenceReasons.unshift(autoBestReason);
+
+  const secondsUntilNextEntry = Math.max(0, nextEntryTime - serverNowSeconds);
 
   if (hasDojiInBase && config.blockOnDoji) {
-    blockReasons.push('Doji detectado nas 3 últimas velas base (Proteção MHI)');
+    blockReasons.push('Doji detectado nas velas base (Proteção Probabilística)');
   }
 
   if (rawDirection === 'NEUTRAL') {
-    blockReasons.push('Empate de cores na base MHI');
-  } else {
-    confluenceReasons.push(
-      `${config.mhiVariant.replace('_', ' ')} (${config.mhiMode}): ${greenCount} Verde / ${redCount} Vermelha → ${rawDirection}`
-    );
+    blockReasons.push('Aguardando formação de padrão probabilístico');
   }
 
   // Technical Confluence checks on closed candles
@@ -583,6 +877,61 @@ export function evaluateMHIConfluence(
     }
   }
 
+  // 8. ATR Volatility Filter (Average True Range)
+  if (config.useAtrFilter && rawDirection !== 'NEUTRAL') {
+    const minPercent = config.atrMinPercent ?? 0.015;
+    const maxPercent = config.atrMaxPercent ?? 0.12;
+    const mode = config.atrBlockMode ?? 'OUTSIDE_RANGE';
+
+    const isHigh = snap.atrPercent > maxPercent;
+    const isLow = snap.atrPercent < minPercent;
+
+    if (isHigh && (mode === 'OUTSIDE_RANGE' || mode === 'HIGH_ONLY')) {
+      blockReasons.push(
+        `Filtro ATR: Volatilidade Excessiva (${snap.atrPercent.toFixed(3)}% > máx ${maxPercent.toFixed(3)}%) - Mercado com alta volatilidade/ruído!`
+      );
+    } else if (isLow && (mode === 'OUTSIDE_RANGE' || mode === 'LOW_ONLY')) {
+      blockReasons.push(
+        `Filtro ATR: Volatilidade Insuficiente (${snap.atrPercent.toFixed(3)}% < mín ${minPercent.toFixed(3)}%) - Mercado sem amplitude/risco de doji!`
+      );
+    } else {
+      confluenceReasons.push(
+        `Filtro ATR: Volatilidade Ideal (${snap.atrPercent.toFixed(3)}% na faixa ${minPercent.toFixed(3)}% a ${maxPercent.toFixed(3)}%)`
+      );
+      confidenceScore += 10;
+    }
+  }
+
+  // 9. Market Sentiment & Volume Power Filter (Bullish vs Bearish Power)
+  if (config.useSentimentFilter && rawDirection !== 'NEUTRAL') {
+    const threshold = config.sentimentThreshold ?? 55;
+    const { bullPower, bearPower, sentiment } = snap.marketSentiment;
+
+    if (rawDirection === 'CALL') {
+      if (sentiment === 'BEARISH' && bearPower >= threshold) {
+        blockReasons.push(
+          `Filtro de Sentimento: Pressão vendedora dominante (Ursos ${bearPower}% > ${threshold}%). Entrada CALL barrada!`
+        );
+      } else if (bullPower >= threshold) {
+        confluenceReasons.push(
+          `Sentimento Alinhado: Força Compradora dominante (Touros ${bullPower}% vs Ursos ${bearPower}%)`
+        );
+        confidenceScore += 10;
+      }
+    } else if (rawDirection === 'PUT') {
+      if (sentiment === 'BULLISH' && bullPower >= threshold) {
+        blockReasons.push(
+          `Filtro de Sentimento: Pressão compradora dominante (Touros ${bullPower}% > ${threshold}%). Entrada PUT barrada!`
+        );
+      } else if (bearPower >= threshold) {
+        confluenceReasons.push(
+          `Sentimento Alinhado: Força Vendedora dominante (Ursos ${bearPower}% vs Touros ${bullPower}%)`
+        );
+        confidenceScore += 10;
+      }
+    }
+  }
+
   confidenceScore = Math.min(99, Math.max(15, confidenceScore - blockReasons.length * 18));
 
   const isPreSignal = secondsUntilNextEntry <= 30 && secondsUntilNextEntry > 0;
@@ -631,6 +980,7 @@ export function catalogPairCandles(
   const emaSlow = calculateEMA(closes, config.emaSlowPeriod || 21);
   const emaMacro = calculateEMA(closes, config.macroTrendPeriod || 200);
   const rsiArr = calculateRSI(closes, config.rsiPeriod || 14);
+  const atrData = calculateATR(sorted, config.atrPeriod || 14);
 
   // Map candle timestamp -> index in sorted array
   const timeToIndex = new Map<number, number>();
@@ -766,6 +1116,30 @@ export function catalogPairCandles(
       if (
         (direction === 'CALL' && rsiVal >= config.rsiOverbought) ||
         (direction === 'PUT' && rsiVal <= config.rsiOversold)
+      ) {
+        filteredByIndicatorsCount++;
+        recentQuadrants.push({
+          timestamp: entryTime,
+          formattedTime,
+          direction,
+          outcome: 'FILTERED_OUT',
+          emaAligned,
+          rsiValue: rsiVal,
+        });
+        continue;
+      }
+    }
+
+    if (config.useAtrFilter) {
+      const currentAtrPct = atrData.atrPercentValues[b3Idx] ?? 0;
+      const minPercent = config.atrMinPercent ?? 0.015;
+      const maxPercent = config.atrMaxPercent ?? 0.12;
+      const mode = config.atrBlockMode ?? 'OUTSIDE_RANGE';
+      const isHigh = currentAtrPct > maxPercent;
+      const isLow = currentAtrPct < minPercent;
+      if (
+        (isHigh && (mode === 'OUTSIDE_RANGE' || mode === 'HIGH_ONLY')) ||
+        (isLow && (mode === 'OUTSIDE_RANGE' || mode === 'LOW_ONLY'))
       ) {
         filteredByIndicatorsCount++;
         recentQuadrants.push({
@@ -947,6 +1321,51 @@ export const CATALOG_STRATEGY_PRESETS: {
     useEmaFilter: true,
     useRsiFilter: true,
     useBollingerFilter: true,
+  },
+  {
+    id: 'MILHAO_MIN',
+    name: 'Padrão Milhão — Minoria',
+    mhiVariant: 'MILHAO',
+    mhiMode: 'MINORIA',
+    useEmaFilter: false,
+    useRsiFilter: false,
+    useBollingerFilter: false,
+  },
+  {
+    id: 'MILHAO_MAI',
+    name: 'Padrão Milhão — Maioria',
+    mhiVariant: 'MILHAO',
+    mhiMode: 'MAIORIA',
+    useEmaFilter: false,
+    useRsiFilter: false,
+    useBollingerFilter: false,
+  },
+  {
+    id: 'TORRES_GEMEAS',
+    name: 'Torres Gêmeas (Vela 1 = Vela 5)',
+    mhiVariant: 'TORRES_GEMEAS',
+    mhiMode: 'MAIORIA',
+    useEmaFilter: false,
+    useRsiFilter: false,
+    useBollingerFilter: false,
+  },
+  {
+    id: 'PADRAO_23',
+    name: 'Padrão 23 (Vela 2 = Vela 4)',
+    mhiVariant: 'PADRAO_23',
+    mhiMode: 'MAIORIA',
+    useEmaFilter: false,
+    useRsiFilter: false,
+    useBollingerFilter: false,
+  },
+  {
+    id: 'TRES_MOSQUETEIROS',
+    name: 'Três Mosqueteiros (Seguimento de Fluxo)',
+    mhiVariant: 'TRES_MOSQUETEIROS',
+    mhiMode: 'MAIORIA',
+    useEmaFilter: false,
+    useRsiFilter: false,
+    useBollingerFilter: false,
   },
 ];
 

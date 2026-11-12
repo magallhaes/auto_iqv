@@ -2,7 +2,17 @@ export type AccountType = 'PRACTICE' | 'REAL';
 
 export type TimeframeSeconds = 60 | 300 | 900; // M1 (60s), M5 (300s), M15 (900s)
 
-export type MHIVariant = 'MHI_1' | 'MHI_2' | 'MHI_3';
+export type StrategyVariant =
+  | 'MHI_1'
+  | 'MHI_2'
+  | 'MHI_3'
+  | 'MILHAO'
+  | 'TORRES_GEMEAS'
+  | 'PADRAO_23'
+  | 'TRES_MOSQUETEIROS'
+  | 'AUTO_BEST';
+
+export type MHIVariant = StrategyVariant;
 export type MHIMode = 'MINORIA' | 'MAIORIA';
 
 export type ManagementMode = 'FIXED' | 'MARTINGALE' | 'SOROS' | 'SOROSGALE';
@@ -50,6 +60,16 @@ export interface TechnicalSnapshot {
   nearSupport: boolean;
   nearResistance: boolean;
   priceActionPattern: 'BULLISH_ENGULFING' | 'BEARISH_ENGULFING' | 'BULLISH_PINBAR' | 'BEARISH_PINBAR' | 'DOJI' | 'NONE';
+  // ATR Volatility Snapshot
+  atrValue: number;
+  atrPercent: number; // ATR as % of current price
+  atrStatus: 'NORMAL' | 'HIGH_VOLATILITY' | 'LOW_VOLATILITY';
+  // Market Sentiment & Volume Power (Bullish/Bearish Power)
+  marketSentiment: {
+    bullPower: number; // 0 - 100 (%)
+    bearPower: number; // 0 - 100 (%)
+    sentiment: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  };
 }
 
 export interface MHISignalAnalysis {
@@ -95,6 +115,15 @@ export interface StrategyConfig {
   useMacdFilter: boolean;
   useSrFilter: boolean;
   usePriceActionFilter: boolean;
+  // ATR Volatility Filter (Average True Range)
+  useAtrFilter?: boolean;
+  atrPeriod?: number; // default 14
+  atrMinPercent?: number; // e.g. 0.015 (%) - blocks if market is flat/stagnant
+  atrMaxPercent?: number; // e.g. 0.12 (%) - blocks if market is abnormally volatile
+  atrBlockMode?: 'OUTSIDE_RANGE' | 'HIGH_ONLY' | 'LOW_ONLY';
+  // Market Sentiment & Volume Power Filter
+  useSentimentFilter?: boolean;
+  sentimentThreshold?: number; // e.g. 55 (%)
   // News Filter
   useNewsFilter: boolean;
   minBullsToBlock: 2 | 3;
@@ -119,6 +148,14 @@ export interface RiskConfig {
   sorosLevels: number; // e.g., 2, 3, 4
   sorosPayoutReinvestPercent: number; // e.g., 100%
   instrumentType: 'binary' | 'digital';
+  maxConsecutiveLosses?: number; // Trava se atingir N perdas seguidas (ex: 2 ou 3)
+  trailingStopWinEnabled?: boolean; // Trailing stop / lucro protegido
+  trailingStopWinActivationPercent?: number; // Ativar ao atingir X% do stop win (ex: 60%)
+  trailingStopWinGivebackPercent?: number; // Parar se devolver X% do topo de lucro (ex: 25%)
+  minPayoutFilter?: number; // Payout mínimo para o robô operar (ex: 80%)
+  operatingHoursEnabled?: boolean; // Restringir horário de operação
+  operatingHoursStart?: string; // Ex: "06:00"
+  operatingHoursEnd?: string; // Ex: "22:00"
 }
 
 export interface RiskSessionState {
@@ -132,6 +169,11 @@ export interface RiskSessionState {
   nextCalculatedStake: number;
   stopWinReached: boolean;
   stopLossReached: boolean;
+  peakSessionProfit?: number;
+  consecutiveLosses?: number;
+  consecutiveWins?: number;
+  maxConsecutiveLossesReached?: boolean;
+  trailingStopWinTriggered?: boolean;
 }
 
 export interface CatalogQuadrantResult {

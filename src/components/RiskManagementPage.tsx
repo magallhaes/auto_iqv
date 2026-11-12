@@ -9,12 +9,17 @@ import {
 import {
   Calculator,
   CheckCircle2,
+  Clock,
   DollarSign,
+  Lock,
   Percent,
   RefreshCw,
   ShieldAlert,
+  ShieldCheck,
   Target,
+  TrendingUp,
   Wallet,
+  Zap,
 } from 'lucide-react';
 
 interface RiskManagementPageProps {
@@ -443,6 +448,234 @@ export const RiskManagementPage: React.FC<RiskManagementPageProps> = ({
                 className="h-full bg-red-500 transition-all"
                 style={{ width: `${stopLossProgress}%` }}
               />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Seção Pro: Proteções Inteligentes do Robô */}
+      <div className="bg-[#111827] border border-blue-900/40 rounded-lg p-5 space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-sm font-display font-bold text-white flex items-center gap-2">
+                Proteções Inteligentes de Banca (Trailing Stop & Travas de Ciclo)
+                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                  PRO ENGINE
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                Evita devoluções de lucro ao mercado e blinda a banca em sequências atípicas
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* 1. Trailing Stop Win */}
+          <div className="bg-[#0B0F17] border border-slate-800/90 rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                <TrendingUp className="w-3.5 h-3.5" /> Trailing Stop Win
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateRiskConfig({
+                    trailingStopWinEnabled: !riskConfig.trailingStopWinEnabled,
+                  })
+                }
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
+                  riskConfig.trailingStopWinEnabled ? 'bg-emerald-600' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                    riskConfig.trailingStopWinEnabled ? 'translate-x-4.5' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-tight">
+              Trava o lucro assim que alcançar{' '}
+              <strong className="text-emerald-300">
+                {riskConfig.trailingStopWinActivationPercent || 60}%
+              </strong>{' '}
+              do Stop Win (+R${' '}
+              {(
+                riskConfig.stopWin *
+                ((riskConfig.trailingStopWinActivationPercent || 60) / 100)
+              ).toFixed(2)}
+              ). Se o lucro recuar{' '}
+              <strong className="text-red-300">
+                {riskConfig.trailingStopWinGivebackPercent || 25}%
+              </strong>{' '}
+              do topo, o robô encerra garantindo lucro!
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Ativação (% Meta)</label>
+                <input
+                  type="number"
+                  min={30}
+                  max={95}
+                  value={riskConfig.trailingStopWinActivationPercent ?? 60}
+                  onChange={(e) =>
+                    onUpdateRiskConfig({
+                      trailingStopWinActivationPercent: Number(e.target.value),
+                    })
+                  }
+                  className="w-full px-2 py-1.5 bg-[#111827] border border-slate-700 rounded text-xs font-mono font-bold text-emerald-400"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Recuo Máx (% Topo)</label>
+                <input
+                  type="number"
+                  min={10}
+                  max={50}
+                  value={riskConfig.trailingStopWinGivebackPercent ?? 25}
+                  onChange={(e) =>
+                    onUpdateRiskConfig({
+                      trailingStopWinGivebackPercent: Number(e.target.value),
+                    })
+                  }
+                  className="w-full px-2 py-1.5 bg-[#111827] border border-slate-700 rounded text-xs font-mono font-bold text-amber-400"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 2. Limite de Losses Consecutivos */}
+          <div className="bg-[#0B0F17] border border-slate-800/90 rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-red-400 flex items-center gap-1.5">
+                <ShieldAlert className="w-3.5 h-3.5" /> Stop Losses Seguidos
+              </span>
+              <span className="text-[10px] font-mono text-slate-400">
+                Atual: {riskState.consecutiveLosses || 0} seguidos
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-tight">
+              Pausa o robô imediatamente se acumular N ciclos de loss seguidos (independente do Stop Loss total), evitando drawdowns anormais.
+            </p>
+
+            <div>
+              <label className="text-[10px] text-slate-400 block mb-1">Máximo de Losses Seguidos</label>
+              <div className="flex items-center gap-1.5">
+                {[1, 2, 3, 4].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => onUpdateRiskConfig({ maxConsecutiveLosses: num })}
+                    className={`flex-1 py-1.5 rounded text-xs font-mono font-bold transition-colors cursor-pointer border ${
+                      (riskConfig.maxConsecutiveLosses ?? 2) === num
+                        ? 'bg-red-600/30 border-red-500 text-red-300'
+                        : 'bg-[#111827] border-slate-800 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
+                    {num}x
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* 3. Filtro de Payout Mínimo */}
+          <div className="bg-[#0B0F17] border border-slate-800/90 rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5" /> Payout Mínimo Aceito
+              </span>
+              <span className="text-[11px] font-mono font-bold text-cyan-300">
+                {riskConfig.minPayoutFilter ?? 80}%
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-tight">
+              O robô rejeita ordens e ignora catalogação de pares que estejam pagando abaixo dessa taxa de retorno no momento da entrada.
+            </p>
+
+            <div className="flex items-center gap-1.5">
+              {[75, 80, 85, 88].map((pct) => (
+                <button
+                  key={pct}
+                  type="button"
+                  onClick={() => onUpdateRiskConfig({ minPayoutFilter: pct })}
+                  className={`flex-1 py-1.5 rounded text-xs font-mono font-bold transition-colors cursor-pointer border ${
+                    (riskConfig.minPayoutFilter ?? 80) === pct
+                      ? 'bg-cyan-600/30 border-cyan-500 text-cyan-300'
+                      : 'bg-[#111827] border-slate-800 text-slate-400 hover:border-slate-700'
+                  }`}
+                >
+                  {pct}%
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 4. Janela de Horários Permitidos */}
+          <div className="bg-[#0B0F17] border border-slate-800/90 rounded-lg p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" /> Horário de Operação
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateRiskConfig({
+                    operatingHoursEnabled: !riskConfig.operatingHoursEnabled,
+                  })
+                }
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer ${
+                  riskConfig.operatingHoursEnabled ? 'bg-amber-600' : 'bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                    riskConfig.operatingHoursEnabled ? 'translate-x-4.5' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-tight">
+              Permite operações apenas dentro do intervalo de horário de Brasília (BRT), protegendo da baixa liquidez da madrugada.
+            </p>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Início (BRT)</label>
+                <input
+                  type="time"
+                  value={riskConfig.operatingHoursStart || '06:00'}
+                  onChange={(e) =>
+                    onUpdateRiskConfig({
+                      operatingHoursStart: e.target.value,
+                    })
+                  }
+                  className="w-full px-2 py-1 bg-[#111827] border border-slate-700 rounded text-xs font-mono text-slate-200"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-400 block mb-1">Fim (BRT)</label>
+                <input
+                  type="time"
+                  value={riskConfig.operatingHoursEnd || '22:00'}
+                  onChange={(e) =>
+                    onUpdateRiskConfig({
+                      operatingHoursEnd: e.target.value,
+                    })
+                  }
+                  className="w-full px-2 py-1 bg-[#111827] border border-slate-700 rounded text-xs font-mono text-slate-200"
+                />
+              </div>
             </div>
           </div>
         </div>
