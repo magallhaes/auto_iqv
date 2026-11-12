@@ -19,6 +19,9 @@ import {
   TradeOrder,
 } from './types/trading';
 import {
+  getDailyCatalogCandleCount,
+  getStartOfDaySeconds,
+  MAX_CATALOG_CANDLES,
   catalogPairCandles,
   computeTechnicalSnapshot,
   evaluateMHIConfluence,
@@ -396,10 +399,20 @@ export default function App() {
   // Fetch bulk catalog & initial candles
   const fetchCatalogSnapshot = useCallback(async () => {
     try {
-      const candleCount =
+      const lookbackCandleCount =
         strategyConfig.timeframe === 60
           ? Math.max(240, Math.min(300, lookbackHours * 60))
           : Math.max(200, Math.min(240, lookbackHours * 12 * 3));
+      const candleCount = Math.min(
+        MAX_CATALOG_CANDLES,
+        Math.max(
+          lookbackCandleCount,
+          getDailyCatalogCandleCount(
+            Math.floor(Date.now() / 1000),
+            strategyConfig.timeframe
+          )
+        )
+      );
       const res = await fetch(
         `/api/iq/catalog-snapshot?timeframe=${strategyConfig.timeframe}&count=${candleCount}`
       );
@@ -429,8 +442,9 @@ export default function App() {
     const fetchPair = async () => {
       try {
         const tf = strategyConfig.timeframe;
+        const candleCount = getDailyCatalogCandleCount(Math.floor(Date.now() / 1000), tf);
         const res = await fetch(
-          `/api/iq/candles?assetId=${selectedAssetId}&timeframe=${tf}&count=250`
+          `/api/iq/candles?assetId=${selectedAssetId}&timeframe=${tf}&count=${candleCount}`
         );
         if (!res.ok || !active) return;
         const data = await res.json();
@@ -575,7 +589,7 @@ export default function App() {
                       list[lastIdx] = candle;
                     } else if (candle.from > list[lastIdx].from) {
                       list.push(candle);
-                      if (list.length > 300) list.shift();
+                      if (list.length > MAX_CATALOG_CANDLES) list.shift();
                     }
                     next[assetId] = list;
                   }
@@ -596,7 +610,7 @@ export default function App() {
                   list[lastIdx] = candle;
                 } else if (candle.from > list[lastIdx].from) {
                   list.push(candle);
-                  if (list.length > 300) list.shift();
+                  if (list.length > MAX_CATALOG_CANDLES) list.shift();
                 }
                 return { ...prev, [assetId]: list };
               });
@@ -634,11 +648,12 @@ export default function App() {
   }, [riskConfig.baseEntryAmount]);
 
   // Compute Catalog Stats for all pairs
+  const catalogStartTimestamp = getStartOfDaySeconds(serverNowSec);
   const catalogStats: PairCatalogStats[] = useMemo(() => {
     return assets
       .map((asset) => {
         const cList = candlesByAsset[asset.id] || [];
-        return catalogPairCandles(asset, cList, strategyConfig);
+        return catalogPairCandles(asset, cList, strategyConfig, catalogStartTimestamp);
       })
       .sort(
         (a, b) =>
@@ -646,7 +661,7 @@ export default function App() {
           b.asset.payout - a.asset.payout ||
           b.validSignalsCount - a.validSignalsCount
       );
-  }, [assets, candlesByAsset, strategyConfig]);
+  }, [assets, candlesByAsset, strategyConfig, catalogStartTimestamp]);
 
   const autoSelectedBotAssetIds = useMemo(() => {
     const availablePairs = catalogStats.filter(
@@ -1769,6 +1784,7 @@ export default function App() {
             assets={assets}
             candlesByAsset={candlesByAsset}
             catalogStats={catalogStats}
+            catalogStartTimestamp={catalogStartTimestamp}
             config={strategyConfig}
             onUpdateConfig={(patch) =>
               setStrategyConfig((prev) => ({ ...prev, ...patch }))

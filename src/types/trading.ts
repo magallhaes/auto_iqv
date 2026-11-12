@@ -253,6 +253,7 @@ export interface TradeOrder {
   expirationTimestamp?: number;
   timeframe?: number;
   signalId?: string;
+  cycleId?: string;
   // Loss Post-Mortem Diagnostics
   lossDiagnosis?: string;
   lossFactor?: string;

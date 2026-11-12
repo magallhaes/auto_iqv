@@ -6,7 +6,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
-import { computeTechnicalSnapshot, evaluateMHIConfluence } from './src/utils/indicators';
+import {
+  computeTechnicalSnapshot,
+  evaluateMHIConfluence,
+  getDailyCatalogCandleCount,
+  getStartOfDaySeconds,
+  MAX_CATALOG_CANDLES,
+} from './src/utils/indicators';
 import type { StrategyConfig } from './src/types/trading';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -14,6 +20,7 @@ const __dirname = path.dirname(__filename);
 const SESSION_FILE_PATH = '/tmp/quantiq_iq_session.json';
 const ORDERS_FILE_PATH = '/tmp/quantiq_orders.json';
 const BOT_STATE_FILE_PATH = '/tmp/quantiq_bot_state.json';
+const MAX_STORED_ORDERS = 2000;
 
 interface TradeOrder {
   id: string;
@@ -35,6 +42,7 @@ interface TradeOrder {
   expirationTimestamp?: number;
   timeframe?: number;
   signalId?: string;
+  cycleId?: string;
   notes?: string;
   brokerConfirmed?: boolean;
   brokerMessage?: string;
@@ -179,7 +187,11 @@ function loadOrdersFromDisk(): TradeOrder[] {
 
 function saveOrdersToDisk(orders: TradeOrder[]) {
   try {
-    fs.writeFileSync(ORDERS_FILE_PATH, JSON.stringify(orders.slice(0, 500), null, 2), 'utf-8');
+    fs.writeFileSync(
+      ORDERS_FILE_PATH,
+      JSON.stringify(orders.slice(0, MAX_STORED_ORDERS), null, 2),
+      'utf-8'
+    );
   } catch {
     // ignore
   }
@@ -294,6 +306,7 @@ interface BotSignalCandidate {
   confluenceCount: number;
   historicalScore?: number;
   strategyLabel: string;
+  cycleId?: string;
   signal?: ServerScheduledSignal;
 }
 
@@ -511,7 +524,7 @@ function ensureInitialCandles(assetId: number, timeframe: number, count = 240): 
         volume: Math.floor(120 + r * 480),
       };
       existing.push(nextCandle);
-      if (existing.length > 320) existing.shift();
+      if (existing.length > MAX_CATALOG_CANDLES) existing.shift();
       last = nextCandle;
     }
     return existing;
@@ -614,9 +627,10 @@ class IQOptionBridge {
   constructor() {
     this.initActiveIdMap();
 
+    const nowSec = Math.floor(Date.now() / 1000);
     for (const asset of DEFAULT_ASSETS) {
-      ensureInitialCandles(asset.id, 60, 240);
-      ensureInitialCandles(asset.id, 300, 180);
+      ensureInitialCandles(asset.id, 60, getDailyCatalogCandleCount(nowSec, 60));
+      ensureInitialCandles(asset.id, 300, getDailyCatalogCandleCount(nowSec, 300));
     }
 
     // Restore saved session if present so server restarts never drop user connection
@@ -892,6 +906,43 @@ class IQOptionBridge {
     }).format(new Date(timestamp));
   }
 
+  private formatTelegramDailyStats() {
+    const startOfDay = getStartOfDaySeconds(Math.floor(Date.now() / 1000));
+    const cycles = new Map<string, TradeOrder[]>();
+    for (const order of this.ordersStore) {
+      const cycleKey = order.cycleId || order.id;
+      const cycle = cycles.get(cycleKey) || [];
+      cycle.push(order);
+      cycles.set(cycleKey, cycle);
+    }
+
+    const todayCycles = [...cycles.values()].filter((cycle) =>
+      cycle.some((order) => order.galeStep === 0 && order.timestamp >= startOfDay)
+    );
+    const wins = todayCycles.filter((cycle) =>
+      cycle.some((order) => order.status === 'WIN')
+    ).length;
+    const losses = todayCycles.filter((cycle) => {
+      if (cycle.some((order) => order.status === 'OPEN' || order.status === 'WIN')) return false;
+      const finalOrder = [...cycle].sort(
+        (a, b) => b.galeStep - a.galeStep || b.timestamp - a.timestamp
+      )[0];
+      if (finalOrder?.status !== 'LOSS') return false;
+      const maxGales = finalOrder.signalId
+        ? this.botState.signalListConfig.maxGales
+        : this.botState.riskConfig.maxGales;
+      return finalOrder.galeStep >= maxGales || !this.botState.isRunning;
+    }).length;
+    const resolved = wins + losses;
+    const accuracy = resolved > 0 ? `${((wins / resolved) * 100).toFixed(1)}%` : 'N/D';
+
+    return [
+      `📊 Sinais gerados hoje: ${todayCycles.length}`,
+      `✅ WIN: ${wins} · ❌ LOSS: ${losses}`,
+      `🎯 Assertividade: ${accuracy}`,
+    ].join('\n');
+  }
+
   private notifyTelegramOrderEntry(order: TradeOrder) {
     if (!this.telegramEnabled || !this.telegramAlertSignals) return;
     const executionMode = this.ssid.startsWith('sim_session_') ? 'Simulação local' :
@@ -905,6 +956,7 @@ class IQOptionBridge {
       `💰 Valor: ${order.amount.toFixed(2)} ${this.currency}`,
       `📍 Preço: ${order.openPrice.toFixed(5)}`,
       `🕒 Brasília: ${this.formatTelegramTimestamp(order.timestamp * 1000)}`,
+      this.formatTelegramDailyStats(),
     ].join('\n');
     void this.sendTelegramMessage(message);
   }
@@ -934,6 +986,7 @@ class IQOptionBridge {
       `💰 Resultado: ${profit}`,
       `📍 Fechamento: ${order.closePrice?.toFixed(5) || 'n/d'}`,
       `🕒 Brasília: ${this.formatTelegramTimestamp(Date.now())}`,
+      this.formatTelegramDailyStats(),
       order.brokerMessage || '',
     ].filter(Boolean).join('\n');
     void this.sendTelegramMessage(message);
@@ -1746,7 +1799,7 @@ class IQOptionBridge {
       list[lastIdx] = candle;
     } else if (lastIdx < 0 || candle.from > list[lastIdx].from) {
       list.push(candle);
-      if (list.length > 320) list.shift();
+      if (list.length > MAX_CATALOG_CANDLES) list.shift();
     }
     this.broadcast({
       type: 'candle_tick',
@@ -1964,7 +2017,7 @@ class IQOptionBridge {
               volume: 15,
             };
             list.push(currentCandle);
-            if (list.length > 320) list.shift();
+            if (list.length > MAX_CATALOG_CANDLES) list.shift();
           } else {
             const quadrantIndex = Math.floor(currentBucket / (tf * 5));
             const posInQuadrant = Math.floor((currentBucket % (tf * 5)) / tf);
@@ -2022,6 +2075,7 @@ class IQOptionBridge {
     sorosLevel?: number;
     strategyLabel?: string;
     signalId?: string;
+    cycleId?: string;
   }): TradeOrder {
     const {
       assetId,
@@ -2035,6 +2089,7 @@ class IQOptionBridge {
       sorosLevel = 1,
       strategyLabel = 'Operação',
       signalId,
+      cycleId,
     } = params;
 
     const numAmount = Math.max(2, Number(amount) || 2);
@@ -2098,13 +2153,16 @@ class IQOptionBridge {
       expirationTimestamp,
       timeframe,
       signalId,
+      cycleId,
       brokerConfirmed: false,
       brokerMessage: 'Enviando à corretora IQ Option...',
     };
 
     this.pendingOrdersByReqId.set(reqId, order.id);
     this.ordersStore.unshift(order);
-    if (this.ordersStore.length > 500) this.ordersStore = this.ordersStore.slice(0, 500);
+    if (this.ordersStore.length > MAX_STORED_ORDERS) {
+      this.ordersStore = this.ordersStore.slice(0, MAX_STORED_ORDERS);
+    }
     saveOrdersToDisk(this.ordersStore);
 
     this.broadcast({
@@ -2340,6 +2398,7 @@ class IQOptionBridge {
             galeStep: nextGaleStep,
             strategyLabel: `${order.strategyLabel.replace(/ \[Gale \d\]/g, '')} [Gale ${nextGaleStep}]`,
             signalId: order.signalId,
+            cycleId: order.cycleId,
           });
         } else {
           // Max gales reached or stopped: Reset cycle!
@@ -2484,6 +2543,7 @@ class IQOptionBridge {
             galeStep: nextGaleStep,
             strategyLabel: `${order.strategyLabel.replace(/ \[Gale \d\]/g, '')} [Gale ${nextGaleStep}]`,
             signalId: order.signalId,
+            cycleId: order.cycleId,
           });
         } else {
           this.botState.riskState.currentGaleStep = 0;
@@ -2753,6 +2813,7 @@ class IQOptionBridge {
           confluenceCount:
             trendConfluence + this.getTechnicalConfluenceCount(pairCandles, signal.direction),
           strategyLabel: `Lista: ${signal.timeStr} ${signal.ticker}`,
+          cycleId: signal.id,
           signal,
         });
       }
@@ -2816,6 +2877,7 @@ class IQOptionBridge {
               (analysis.confidenceScore >= 80 ? 2 : 0),
             historicalScore: this.computeAssetScore(assetId, timeframe),
             strategyLabel,
+            cycleId: triggerKey,
           });
         }
       }
@@ -2865,6 +2927,7 @@ class IQOptionBridge {
       galeStep: 0,
       strategyLabel: selectedCandidate.strategyLabel,
       signalId: selectedCandidate.signal?.id,
+      cycleId: selectedCandidate.cycleId,
     });
 
     if (selectedCandidate.signal) {
@@ -2965,7 +3028,10 @@ async function startServer() {
   app.get('/api/iq/candles', (req, res) => {
     const rawAssetId = Number(req.query.assetId) || 1;
     const timeframe = Number(req.query.timeframe) || 60;
-    const count = Math.min(300, Math.max(30, Number(req.query.count) || 200));
+    const count = Math.min(
+      MAX_CATALOG_CANDLES,
+      Math.max(30, Number(req.query.count) || 200)
+    );
 
     const resolved = iqBridge.resolveActive(rawAssetId);
     if (iqBridge.connected && iqBridge.authenticated) {
@@ -2988,7 +3054,10 @@ async function startServer() {
 
   app.get('/api/iq/catalog-snapshot', (req, res) => {
     const timeframe = Number(req.query.timeframe) || 60;
-    const count = Math.min(300, Math.max(60, Number(req.query.count) || 180));
+    const count = Math.min(
+      MAX_CATALOG_CANDLES,
+      Math.max(60, Number(req.query.count) || 180)
+    );
     const data: Record<number, Candle[]> = {};
     for (const asset of iqBridge.catalogAssets) {
       const resolved = iqBridge.resolveActive(asset.id, asset.ticker);

@@ -10,6 +10,54 @@ import {
   EconomicNewsEvent,
 } from '../types/trading';
 
+export const MAX_CATALOG_CANDLES = 1800;
+
+export function getStartOfDaySeconds(
+  timestampSeconds: number,
+  timeZone = 'America/Sao_Paulo'
+): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(timestampSeconds * 1000));
+  const getPart = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  const year = getPart('year');
+  const month = getPart('month');
+  const day = getPart('day');
+  const localTimeAsUtc = Date.UTC(
+    year,
+    month - 1,
+    day,
+    getPart('hour'),
+    getPart('minute'),
+    getPart('second')
+  );
+  const offsetMs = localTimeAsUtc - timestampSeconds * 1000;
+
+  return Math.floor((Date.UTC(year, month - 1, day) - offsetMs) / 1000);
+}
+
+export function getDailyCatalogCandleCount(
+  timestampSeconds: number,
+  timeframe: number,
+  warmupCandles = 240
+): number {
+  const elapsedSinceMidnight = Math.max(
+    0,
+    timestampSeconds - getStartOfDaySeconds(timestampSeconds)
+  );
+  return Math.min(
+    MAX_CATALOG_CANDLES,
+    Math.max(240, Math.ceil(elapsedSinceMidnight / timeframe) + warmupCandles)
+  );
+}
+
 export function getCandleColor(c: Candle): 'GREEN' | 'RED' | 'DOJI' {
   const diff = Math.abs(c.close - c.open);
   if (diff < 0.000001) return 'DOJI';
@@ -590,7 +638,8 @@ export function evaluateMHIConfluence(
           category: 'binary',
         },
         candles,
-        { ...config, mhiVariant: v }
+        { ...config, mhiVariant: v },
+        getStartOfDaySeconds(serverNowSeconds)
       );
       if (stats.validSignalsCount >= 3 && stats.winRateGale1 > bestWinRate) {
         bestWinRate = stats.winRateGale1;
@@ -967,7 +1016,8 @@ export function evaluateMHIConfluence(
 export function catalogPairCandles(
   asset: IQAsset,
   candles: Candle[],
-  config: StrategyConfig
+  config: StrategyConfig,
+  catalogStartTimestamp = 0
 ): PairCatalogStats {
   const tf = config.timeframe; // 60 or 300
   const quadrantSeconds = tf * 5;
@@ -1019,6 +1069,7 @@ export function catalogPairCandles(
 
     // Entry candle and Gale 1 & Gale 2 candles in next quadrant
     const entryTime = nextQStart + variantOffset * tf;
+    if (entryTime < catalogStartTimestamp) continue;
     const e0Idx = timeToIndex.get(entryTime);
     const e1Idx = timeToIndex.get(entryTime + tf);
     const e2Idx = timeToIndex.get(entryTime + 2 * tf);
@@ -1372,7 +1423,8 @@ export const CATALOG_STRATEGY_PRESETS: {
 export function catalogAllStrategies(
   assets: IQAsset[],
   candlesByAsset: Record<number, Candle[]>,
-  baseConfig: StrategyConfig
+  baseConfig: StrategyConfig,
+  catalogStartTimestamp = 0
 ) {
   const benchmarks = [];
   for (const asset of assets) {
@@ -1389,7 +1441,7 @@ export function catalogAllStrategies(
         useRsiFilter: preset.useRsiFilter,
         useBollingerFilter: preset.useBollingerFilter,
       };
-      const stats = catalogPairCandles(asset, candles, cfg);
+      const stats = catalogPairCandles(asset, candles, cfg, catalogStartTimestamp);
       benchmarks.push({
         strategyId: preset.id,
         strategyName: preset.name,

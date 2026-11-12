@@ -30,6 +30,7 @@ interface CatalogPageProps {
   assets: IQAsset[];
   candlesByAsset: Record<number, Candle[]>;
   catalogStats: PairCatalogStats[];
+  catalogStartTimestamp: number;
   config: StrategyConfig;
   onUpdateConfig: (patch: Partial<StrategyConfig>) => void;
   selectedBotAssetIds: number[];
@@ -55,6 +56,7 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
   assets,
   candlesByAsset,
   catalogStats,
+  catalogStartTimestamp,
   config,
   onUpdateConfig,
   selectedBotAssetIds,
@@ -79,8 +81,8 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
 
   // Calculate benchmarks across all 8 strategies x all pairs
   const allStrategyBenchmarks: StrategyCatalogBenchmark[] = useMemo(() => {
-    return catalogAllStrategies(assets, candlesByAsset, config);
-  }, [assets, candlesByAsset, config]);
+    return catalogAllStrategies(assets, candlesByAsset, config, catalogStartTimestamp);
+  }, [assets, candlesByAsset, config, catalogStartTimestamp]);
 
   // Global Assertiveness Summary per Strategy across all pairs
   const strategyGlobalSummaries = useMemo(() => {
@@ -208,6 +210,7 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
           </h1>
           <p className="text-xs text-slate-400 mt-1">
             Compare em tempo real a taxa de vitória de cada estratégia (MHI 1, MHI 2, MHI 3, Maioria, Minoria, EMA 9/21, RSI e Bollinger) em cada par de moedas.
+            {' '}Os resultados reiniciam diariamente às 00:00 (horário de Brasília).
           </p>
         </div>
 
