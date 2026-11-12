@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 interface LoginScreenProps {
-  onLoginSuccess: (user: { email: string; name: string }) => void;
+  onLoginSuccess: (user: { email: string; name: string; uid?: string; photoURL?: string }) => void;
   savedEmail?: string;
 }
 

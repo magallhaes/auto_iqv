@@ -12,16 +12,18 @@ import {
   doc,
   setDoc,
   getDoc,
+  getDocFromServer,
   collection,
   query,
   orderBy,
   limit,
-  getDocs,
   deleteDoc,
   onSnapshot,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import type { Order, TradeOrder, TechnicalSnapshot } from '../types/trading';
+
+export type FirebaseUser = User;
 
 // Initialize Firebase App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -30,6 +32,18 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+
+// Validate Connection to Firestore on boot
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Please check your Firebase configuration.');
+    }
+  }
+}
+void testConnection();
 
 export enum OperationType {
   CREATE = 'create',
@@ -49,6 +63,11 @@ export interface FirestoreErrorInfo {
     email?: string | null;
     emailVerified?: boolean | null;
     isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
   };
 }
 
@@ -64,6 +83,12 @@ export function handleFirestoreError(
       email: auth.currentUser?.email,
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo:
+        auth.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email,
+        })) || [],
     },
     operationType,
     path,
@@ -116,10 +141,12 @@ export function diagnoseLostTrade(
       diagnosis: `A vela encerrou praticamente no mesmo preço de abertura (variação de apenas ${(priceDelta * 10000).toFixed(2)} pips). Sem amplitude suficiente para superar o spread.`,
       recommendation:
         'Ative o Filtro ATR com limite mínimo de 0.015% ou ative a opção "Bloquear em Doji" para evitar quadrantes sem volume.',
-      indicatorSnap: snapshot ? {
-        rsi: snapshot.rsi14,
-        atrPercent: snapshot.atrPercent,
-      } : undefined,
+      indicatorSnap: snapshot
+        ? {
+            rsi: snapshot.rsi14,
+            atrPercent: snapshot.atrPercent,
+          }
+        : undefined,
     };
   }
 
@@ -252,11 +279,13 @@ export function diagnoseLostTrade(
       'O ciclo probabilístico sofreu inversão momentânea na formação da vela de expiração. A catalogação estatística sofreu desvio transitório.',
     recommendation:
       'Utilize gestão de Gale 1 ou filtre ativos com assertividade mínima de 85% pelo catalogador em tempo real.',
-    indicatorSnap: snapshot ? {
-      rsi: snapshot.rsi14,
-      emaTrend: snapshot.emaTrend,
-      atrPercent: snapshot.atrPercent,
-    } : undefined,
+    indicatorSnap: snapshot
+      ? {
+          rsi: snapshot.rsi14,
+          emaTrend: snapshot.emaTrend,
+          atrPercent: snapshot.atrPercent,
+        }
+      : undefined,
   };
 }
 
@@ -282,6 +311,7 @@ export function subscribeToAuth(callback: (user: User | null) => void) {
 
 // User Profile & Session Persistence
 export async function syncUserProfile(user: User): Promise<void> {
+  if (!auth.currentUser || auth.currentUser.uid !== user.uid) return;
   const path = `users/${user.uid}`;
   try {
     const userRef = doc(db, 'users', user.uid);
@@ -320,9 +350,12 @@ export async function persistOrderToFirestore(
   userId: string,
   snapshot?: TechnicalSnapshot
 ): Promise<void> {
-  const path = `users/${userId}/orders/${order.id}`;
+  if (!auth.currentUser || auth.currentUser.uid !== userId) return;
+
+  const safeOrderId = String(order.id).replace(/[^a-zA-Z0-9_-]/g, '_');
+  const path = `users/${userId}/orders/${safeOrderId}`;
   try {
-    const orderRef = doc(db, 'users', userId, 'orders', order.id);
+    const orderRef = doc(db, 'users', userId, 'orders', safeOrderId);
 
     let lossDiagnosis: LossDiagnosis | null = null;
     if (order.status === 'LOSS' || (order as unknown as { status: string }).status === 'LOST') {
@@ -330,7 +363,7 @@ export async function persistOrderToFirestore(
     }
 
     const payload = {
-      id: order.id,
+      id: safeOrderId,
       userId,
       assetId: order.assetId,
       assetTicker: order.assetTicker,
@@ -348,11 +381,13 @@ export async function persistOrderToFirestore(
       timestamp: order.timestamp,
       strategyLabel: order.strategyLabel || 'MHI',
       accountType: order.accountType || 'PRACTICE',
-      lossDiagnosis: lossDiagnosis ? lossDiagnosis.diagnosis : (order.lossDiagnosis || null),
-      lossFactor: lossDiagnosis ? lossDiagnosis.primaryFactor : (order.lossFactor || null),
-      lossTitle: lossDiagnosis ? lossDiagnosis.title : (order.lossTitle || null),
-      lossRecommendation: lossDiagnosis ? lossDiagnosis.recommendation : (order.lossRecommendation || null),
-      indicatorSnap: lossDiagnosis?.indicatorSnap || (order.indicatorSnap || null),
+      lossDiagnosis: lossDiagnosis ? lossDiagnosis.diagnosis : order.lossDiagnosis || null,
+      lossFactor: lossDiagnosis ? lossDiagnosis.primaryFactor : order.lossFactor || null,
+      lossTitle: lossDiagnosis ? lossDiagnosis.title : order.lossTitle || null,
+      lossRecommendation: lossDiagnosis
+        ? lossDiagnosis.recommendation
+        : order.lossRecommendation || null,
+      indicatorSnap: lossDiagnosis?.indicatorSnap || order.indicatorSnap || null,
       updatedAt: new Date().toISOString(),
     };
 
@@ -366,6 +401,10 @@ export function subscribeToUserOrders(
   userId: string,
   onOrders: (orders: TradeOrder[]) => void
 ) {
+  if (!auth.currentUser || auth.currentUser.uid !== userId) {
+    return () => {};
+  }
+
   const path = `users/${userId}/orders`;
   const ordersQuery = query(
     collection(db, 'users', userId, 'orders'),
@@ -415,9 +454,11 @@ export async function deleteUserOrderFromFirestore(
   userId: string,
   orderId: string
 ): Promise<void> {
-  const path = `users/${userId}/orders/${orderId}`;
+  if (!auth.currentUser || auth.currentUser.uid !== userId) return;
+  const safeOrderId = String(orderId).replace(/[^a-zA-Z0-9_-]/g, '_');
+  const path = `users/${userId}/orders/${safeOrderId}`;
   try {
-    await deleteDoc(doc(db, 'users', userId, 'orders', orderId));
+    await deleteDoc(doc(db, 'users', userId, 'orders', safeOrderId));
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, path);
   }
@@ -431,8 +472,9 @@ export async function persistQuoteSnapshot(
   bearPower = 50,
   atrPercent = 0.05
 ): Promise<void> {
-  const quoteId = `${ticker.replace('/', '_')}_${Date.now()}`;
-  const path = `quotes/${quoteId}`;
+  if (!auth.currentUser) return;
+  const safeTicker = ticker.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const quoteId = `${safeTicker}_${Date.now()}`;
   try {
     await setDoc(doc(db, 'quotes', quoteId), {
       id: quoteId,

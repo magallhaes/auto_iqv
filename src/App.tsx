@@ -77,6 +77,11 @@ import {
   persistOrderToFirestore,
   subscribeToUserOrders,
   persistQuoteSnapshot,
+  subscribeToAuth,
+  syncUserProfile,
+  loginWithGoogle,
+  logoutUser,
+  type FirebaseUser,
 } from './lib/firebase';
 
 type ActiveTab = 'TERMINAL' | 'CATALOG' | 'SIGNALS' | 'RISK' | 'NEWS' | 'PERFORMANCE' | 'NOTIFICATIONS';
@@ -187,7 +192,12 @@ export default function App() {
   const [selectedLossOrder, setSelectedLossOrder] = useState<TradeOrder | null>(null);
 
   // System Access Authentication Gate (Tela de Login)
-  const [currentUser, setCurrentUser] = useState<{ email: string; name: string } | null>(() => {
+  const [currentUser, setCurrentUser] = useState<{
+    email: string;
+    name: string;
+    uid?: string;
+    photoURL?: string;
+  } | null>(() => {
     try {
       const stored = localStorage.getItem('quantiq_user_session');
       if (stored) return JSON.parse(stored);
@@ -197,9 +207,44 @@ export default function App() {
     return null;
   });
 
+  // Firebase Auth Session Tracking (for Firestore security rules)
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
+  const firebaseUserRef = useRef<FirebaseUser | null>(null);
+
+  useEffect(() => {
+    const unsub = subscribeToAuth((fbUser) => {
+      firebaseUserRef.current = fbUser;
+      setFirebaseUser(fbUser);
+      setAuthReady(true);
+      if (fbUser) {
+        syncUserProfile(fbUser).catch(() => {});
+        setCurrentUser((prev) => {
+          const updated = {
+            email: fbUser.email || prev?.email || '',
+            name: fbUser.displayName || prev?.name || 'Trader',
+            uid: fbUser.uid,
+            photoURL: fbUser.photoURL || prev?.photoURL,
+          };
+          try {
+            localStorage.setItem(
+              'quantiq_user_session',
+              JSON.stringify({ ...updated, timestamp: Date.now() })
+            );
+          } catch {
+            // ignore
+          }
+          return updated;
+        });
+      }
+    });
+    return () => unsub();
+  }, []);
+
   const handleLogout = () => {
     localStorage.removeItem('quantiq_user_session');
     setCurrentUser(null);
+    logoutUser().catch(() => {});
   };
 
   // Connection & Account Status
@@ -372,10 +417,10 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Sincronização em tempo real de ordens com o banco de dados Firestore
+  // Sincronização em tempo real de ordens com o banco de dados Firestore (somente autenticado via Firebase Auth)
   useEffect(() => {
-    if (!currentUser?.email) return;
-    const unsub = subscribeToUserOrders(currentUser.email, (cloudOrders) => {
+    if (!authReady || !firebaseUser?.uid) return;
+    const unsub = subscribeToUserOrders(firebaseUser.uid, (cloudOrders) => {
       if (cloudOrders.length > 0) {
         setOrders((prev) => {
           const map = new Map<string, TradeOrder>();
@@ -394,7 +439,7 @@ export default function App() {
       }
     });
     return () => unsub();
-  }, [currentUser]);
+  }, [authReady, firebaseUser?.uid]);
 
   // Fetch bulk catalog & initial candles
   const fetchCatalogSnapshot = useCallback(async () => {
@@ -529,9 +574,10 @@ export default function App() {
           } else if (msg.type === 'orders_update' && msg.payload) {
             if (Array.isArray(msg.payload.orders)) {
               setOrders(msg.payload.orders);
-              if (currentUser?.email) {
+              const uid = firebaseUserRef.current?.uid;
+              if (uid) {
                 for (const ord of msg.payload.orders) {
-                  persistOrderToFirestore(ord, currentUser.email, technicalSnapshot).catch(() => {});
+                  persistOrderToFirestore(ord, uid, technicalSnapshotRef.current).catch(() => {});
                 }
               }
             }
@@ -732,6 +778,11 @@ export default function App() {
     return computeTechnicalSnapshot(activeCandles, strategyConfig);
   }, [activeCandles, strategyConfig]);
 
+  const technicalSnapshotRef = useRef(technicalSnapshot);
+  useEffect(() => {
+    technicalSnapshotRef.current = technicalSnapshot;
+  }, [technicalSnapshot]);
+
   const mhiAnalysis = useMemo(() => {
     return evaluateMHIConfluence(
       activeCandles,
@@ -749,7 +800,7 @@ export default function App() {
 
   // Persistência periódica de cotações e força de mercado no Firestore
   useEffect(() => {
-    if (!currentUser || activeCandles.length === 0) return;
+    if (!authReady || !firebaseUser?.uid || activeCandles.length === 0) return;
     const last = activeCandles[activeCandles.length - 1];
     if (!last) return;
 
@@ -764,7 +815,7 @@ export default function App() {
     }, 25000);
 
     return () => clearInterval(interval);
-  }, [currentUser, activeAsset.ticker, activeCandles, technicalSnapshot]);
+  }, [authReady, firebaseUser?.uid, activeAsset.ticker, activeCandles, technicalSnapshot]);
 
   // Active pre-signals across bot-monitored pairs
   const activeBotPreSignals = useMemo(() => {
@@ -1360,14 +1411,30 @@ export default function App() {
               : 'Conectar IQ'}
           </button>
 
-          {/* Firestore Cloud Persistence Badge */}
-          <div
-            className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-[11px] font-mono"
-            title="Banco de dados Firestore conectado (Histórico, Cotações e Auditoria de Loss persistentes)"
-          >
-            <Database className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Firestore</span>
-          </div>
+          {/* Firestore Cloud Persistence Badge / Quick Connect */}
+          {firebaseUser ? (
+            <div
+              className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-[11px] font-mono"
+              title="Banco de dados Firestore conectado (Histórico, Cotações e Auditoria de Loss persistentes)"
+            >
+              <Database className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Firestore</span>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                loginWithGoogle()
+                  .then(() => showToast('Sincronização em nuvem (Firestore) ativada!'))
+                  .catch(() => showToast('Falha ao conectar conta Google para o Firestore.'));
+              }}
+              className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-950/40 hover:bg-amber-900/50 border border-amber-700/60 text-amber-300 text-[11px] font-mono cursor-pointer transition-colors"
+              title="Conecte sua conta Google para salvar operações e diagnósticos no banco de dados Firestore"
+            >
+              <Database className="w-3.5 h-3.5 text-amber-400" />
+              <span>Ativar Nuvem</span>
+            </button>
+          )}
 
           {currentUser && (
             <div className="flex items-center gap-1 sm:gap-1.5 pl-1.5 border-l border-slate-800 text-xs">
