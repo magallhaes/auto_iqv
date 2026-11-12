@@ -253,7 +253,15 @@ export interface TradeOrder {
   expirationTimestamp?: number;
   timeframe?: number;
   signalId?: string;
+  // Loss Post-Mortem Diagnostics
+  lossDiagnosis?: string;
+  lossFactor?: string;
+  lossTitle?: string;
+  lossRecommendation?: string;
+  indicatorSnap?: Record<string, unknown>;
 }
+
+export type Order = TradeOrder;
 
 export interface EconomicNewsEvent {
   id: string;

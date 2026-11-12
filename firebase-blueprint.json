@@ -1,0 +1,76 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Represents the logged-in user and session settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique Firebase Authentication UID" },
+        "email": { "type": "string", "description": "User email address" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "photoURL": { "type": "string", "description": "Avatar photo URL" },
+        "createdAt": { "type": "string", "description": "Timestamp of creation" },
+        "lastLoginAt": { "type": "string", "description": "Timestamp of last active session" },
+        "accountType": { "type": "string", "enum": ["PRACTICE", "REAL"], "description": "Selected account type" }
+      },
+      "required": ["uid", "email"]
+    },
+    "TradeOrder": {
+      "title": "TradeOrder",
+      "description": "Detailed record of an executed binary/digital options order with entry snapshot and diagnostics",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique order ID" },
+        "userId": { "type": "string", "description": "UID of the owner user" },
+        "assetId": { "type": "number", "description": "Broker numeric asset ID" },
+        "ticker": { "type": "string", "description": "Currency pair ticker (e.g. EUR/USD)" },
+        "direction": { "type": "string", "enum": ["CALL", "PUT"], "description": "Order direction" },
+        "amount": { "type": "number", "description": "Stake amount in account currency" },
+        "payout": { "type": "number", "description": "Payout percentage at entry" },
+        "timeframe": { "type": "number", "description": "Timeframe in seconds (60, 300)" },
+        "source": { "type": "string", "enum": ["MANUAL", "STRATEGY", "SIGNAL_LIST"], "description": "Source of trade trigger" },
+        "status": { "type": "string", "enum": ["OPEN", "WON", "LOST", "TIE"], "description": "Order execution result" },
+        "entryPrice": { "type": "number", "description": "Price at entry timestamp" },
+        "exitPrice": { "type": "number", "description": "Price at expiration timestamp" },
+        "profit": { "type": "number", "description": "Financial profit or loss" },
+        "galeLevel": { "type": "number", "description": "Gale step (0 for direct, 1 for Gale 1, 2 for Gale 2)" },
+        "timestamp": { "type": "number", "description": "Epoch timestamp in milliseconds" },
+        "entryTime": { "type": "string", "description": "Formatted entry time string" },
+        "exitTime": { "type": "string", "description": "Formatted exit time string" },
+        "strategyLabel": { "type": "string", "description": "Name of strategy or signal rule" },
+        "lossDiagnosis": { "type": "string", "description": "Post-mortem diagnostic analysis why trade lost" },
+        "lossFactor": { "type": "string", "description": "Categorized root cause of trade failure" }
+      },
+      "required": ["id", "userId", "ticker", "direction", "amount", "status", "timestamp"]
+    },
+    "QuoteSnapshot": {
+      "title": "QuoteSnapshot",
+      "description": "Persisted price quote and volume power snapshot",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Snapshot ID" },
+        "ticker": { "type": "string", "description": "Asset ticker symbol" },
+        "price": { "type": "number", "description": "Current asset quotation" },
+        "timestamp": { "type": "number", "description": "Quotation timestamp in milliseconds" },
+        "bullPower": { "type": "number", "description": "Buying volume power percentage" },
+        "bearPower": { "type": "number", "description": "Selling volume power percentage" },
+        "atrPercent": { "type": "number", "description": "Current ATR volatility percentage" }
+      },
+      "required": ["id", "ticker", "price", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Stores user profile and session data"
+    },
+    "/users/{userId}/orders/{orderId}": {
+      "schema": "TradeOrder",
+      "description": "Detailed trade execution records with post-mortem loss diagnostics"
+    },
+    "/quotes/{quoteId}": {
+      "schema": "QuoteSnapshot",
+      "description": "Historical market quote snapshots for auditing and charts"
+    }
+  }
+}

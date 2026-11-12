@@ -65,8 +65,16 @@ import {
   ChevronUp,
   Send,
   ShieldAlert,
+  AlertTriangle,
+  Database,
 } from 'lucide-react';
 import { playTradingAudio } from './utils/sound';
+import { LossDiagnosisModal } from './components/LossDiagnosisModal';
+import {
+  persistOrderToFirestore,
+  subscribeToUserOrders,
+  persistQuoteSnapshot,
+} from './lib/firebase';
 
 type ActiveTab = 'TERMINAL' | 'CATALOG' | 'SIGNALS' | 'RISK' | 'NEWS' | 'PERFORMANCE' | 'NOTIFICATIONS';
 
@@ -173,6 +181,7 @@ function formatOrderPrice(price: number | undefined, ticker?: string): string {
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('TERMINAL');
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+  const [selectedLossOrder, setSelectedLossOrder] = useState<TradeOrder | null>(null);
 
   // System Access Authentication Gate (Tela de Login)
   const [currentUser, setCurrentUser] = useState<{ email: string; name: string } | null>(() => {
@@ -360,6 +369,30 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  // Sincronização em tempo real de ordens com o banco de dados Firestore
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    const unsub = subscribeToUserOrders(currentUser.email, (cloudOrders) => {
+      if (cloudOrders.length > 0) {
+        setOrders((prev) => {
+          const map = new Map<string, TradeOrder>();
+          // Remote cloud orders first
+          for (const ord of cloudOrders) {
+            map.set(ord.id, ord);
+          }
+          // Merge local orders without overwriting newer states
+          for (const ord of prev) {
+            if (!map.has(ord.id)) {
+              map.set(ord.id, ord);
+            }
+          }
+          return Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+        });
+      }
+    });
+    return () => unsub();
+  }, [currentUser]);
+
   // Fetch bulk catalog & initial candles
   const fetchCatalogSnapshot = useCallback(async () => {
     try {
@@ -480,7 +513,14 @@ export default function App() {
             showToast(`⚠️ ${msg.payload.message || 'Ordem recusada pela corretora IQ Option'}`);
             if (strategyConfig.audioAlertsEnabled) playTradingAudio('LOSS');
           } else if (msg.type === 'orders_update' && msg.payload) {
-            if (Array.isArray(msg.payload.orders)) setOrders(msg.payload.orders);
+            if (Array.isArray(msg.payload.orders)) {
+              setOrders(msg.payload.orders);
+              if (currentUser?.email) {
+                for (const ord of msg.payload.orders) {
+                  persistOrderToFirestore(ord, currentUser.email, technicalSnapshot).catch(() => {});
+                }
+              }
+            }
             if (msg.payload.botState) {
               if (msg.payload.botState.riskState) setRiskState(msg.payload.botState.riskState);
               if (Array.isArray(msg.payload.botState.scheduledSignals)) {
@@ -691,6 +731,25 @@ export default function App() {
     const tf = strategyConfig.timeframe;
     return tf - (serverNowSec % tf);
   }, [serverNowSec, strategyConfig.timeframe]);
+
+  // Persistência periódica de cotações e força de mercado no Firestore
+  useEffect(() => {
+    if (!currentUser || activeCandles.length === 0) return;
+    const last = activeCandles[activeCandles.length - 1];
+    if (!last) return;
+
+    const interval = setInterval(() => {
+      persistQuoteSnapshot(
+        activeAsset.ticker,
+        last.close,
+        technicalSnapshot.marketSentiment?.bullPower ?? 50,
+        technicalSnapshot.marketSentiment?.bearPower ?? 50,
+        technicalSnapshot.atrPercent
+      );
+    }, 25000);
+
+    return () => clearInterval(interval);
+  }, [currentUser, activeAsset.ticker, activeCandles, technicalSnapshot]);
 
   // Active pre-signals across bot-monitored pairs
   const activeBotPreSignals = useMemo(() => {
@@ -1285,6 +1344,15 @@ export default function App() {
               ? `IQ: ${connectionStatus.email?.split('@')[0] || 'Conectada'}`
               : 'Conectar IQ'}
           </button>
+
+          {/* Firestore Cloud Persistence Badge */}
+          <div
+            className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-950/40 border border-emerald-800/60 text-emerald-300 text-[11px] font-mono"
+            title="Banco de dados Firestore conectado (Histórico, Cotações e Auditoria de Loss persistentes)"
+          >
+            <Database className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Firestore</span>
+          </div>
 
           {currentUser && (
             <div className="flex items-center gap-1 sm:gap-1.5 pl-1.5 border-l border-slate-800 text-xs">
@@ -3504,9 +3572,20 @@ export default function App() {
                                       RECUSADA ({ord.brokerMessage ? ord.brokerMessage.substring(0, 22) : 'IQ Bloqueou'})
                                     </span>
                                   ) : (
-                                    <span className="text-red-400">
-                                      LOSS (-R$ {Math.abs(ord.profit).toFixed(2)})
-                                    </span>
+                                    <div className="flex flex-col items-end gap-1">
+                                      <span className="text-red-400">
+                                        LOSS (-R$ {Math.abs(ord.profit).toFixed(2)})
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={() => setSelectedLossOrder(ord)}
+                                        className="inline-flex items-center gap-1 text-[10px] text-amber-300 hover:text-amber-200 bg-amber-950/80 hover:bg-amber-900 border border-amber-500/40 px-2 py-0.5 rounded cursor-pointer transition-colors shadow-sm font-sans"
+                                        title="Ver Diagnóstico Técnico de Loss"
+                                      >
+                                        <AlertTriangle className="w-3 h-3 text-amber-400" />
+                                        <span>Por que perdi?</span>
+                                      </button>
+                                    </div>
                                   )}
                                 </td>
                               </tr>
@@ -3565,6 +3644,17 @@ export default function App() {
                                 )}
                               </div>
                             </div>
+
+                            {ord.status === 'LOSS' && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedLossOrder(ord)}
+                                className="mt-1 flex items-center justify-center gap-1 w-full py-1 text-[10px] text-amber-300 bg-amber-950/80 hover:bg-amber-900 border border-amber-500/40 rounded cursor-pointer transition-colors shadow-sm font-sans"
+                              >
+                                <AlertTriangle className="w-3 h-3 text-amber-400" />
+                                <span>Por que perdi? Ver Diagnóstico</span>
+                              </button>
+                            )}
                           </div>
                         );
                       })}
@@ -3674,6 +3764,12 @@ export default function App() {
         onConnect={handleConnectIQ}
         onVerify2FA={handleVerify2FA}
         onDisconnect={handleDisconnectIQ}
+      />
+
+      {/* Post-Mortem Loss Technical Diagnostics Modal */}
+      <LossDiagnosisModal
+        order={selectedLossOrder}
+        onClose={() => setSelectedLossOrder(null)}
       />
     </div>
   );
