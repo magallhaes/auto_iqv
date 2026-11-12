@@ -658,7 +658,7 @@ export default function App() {
     const qualifyingPairs = availablePairs.filter(
       (item) => item.winRateGale1 >= minimumWinRate
     );
-    const rankedPairs = [...(qualifyingPairs.length > 0 ? qualifyingPairs : availablePairs)].sort(
+    const rankedPairs = [...qualifyingPairs].sort(
       (a, b) =>
         b.winRateGale1 - a.winRateGale1 ||
         b.asset.payout - a.asset.payout ||
@@ -669,7 +669,7 @@ export default function App() {
   }, [catalogStats, strategyConfig.minCatalogWinRate]);
 
   useEffect(() => {
-    if (!strategyConfig.autoSyncTopCatalogPairs || autoSelectedBotAssetIds.length === 0) return;
+    if (!strategyConfig.autoSyncTopCatalogPairs) return;
     if (
       selectedBotAssetIds.length === autoSelectedBotAssetIds.length &&
       selectedBotAssetIds.every((id, index) => id === autoSelectedBotAssetIds[index])
@@ -1913,7 +1913,7 @@ export default function App() {
                     }))
                   }
                   className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-slate-700 bg-[#0B0F17] text-xs font-medium text-slate-300 whitespace-nowrap shrink-0 cursor-pointer hover:border-slate-500"
-                  title="Prioriza até 3 pares ativos pelo win-rate de Gale 1 e, em empate, pelo payout"
+                  title="Seleciona até 3 pares abertos que atingem o win-rate mínimo de Gale 1; limpa a seleção se nenhum se qualificar"
                 >
                   <span>Auto pares</span>
                   <span

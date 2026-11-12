@@ -187,7 +187,7 @@ export const CatalogPage: React.FC<CatalogPageProps> = ({
     const qualifying = filteredAndSorted
       .filter((s) => s.winRateGale1 >= (config.minCatalogWinRate || 85))
       .map((s) => s.asset.id);
-    if (onSetSelectedBotAssetIds && qualifying.length > 0) {
+    if (onSetSelectedBotAssetIds) {
       onSetSelectedBotAssetIds(qualifying);
     } else {
       qualifying.forEach((id) => {
